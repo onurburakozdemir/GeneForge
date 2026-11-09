@@ -156,7 +156,8 @@
       g.addEventListener('click', ev => { ev.stopPropagation(); opts.onFeature && opts.onFeature(f); });
     });
 
-    /* ORF track */
+    /* ORF track. Each ORF is drawn as an arrow whose tail sits on the start
+       codon, so the reading direction is visible without reading the numbers. */
     if (orfs.length) {
       const t = el('text', { class: 'ticktext', x: padL, y: orfTop - 3 }, svg);
       t.textContent = 'ORFs';
@@ -164,14 +165,42 @@
         const lane = orfPacked.lane.get(item.key) || 0;
         const y = orfTop + lane * 9;
         const col = item.o.strand === 1 ? '#2f855a' : '#9c4221';
-        const r = el('rect', {
-          class: 'orfbar', x: x(item.a), y, width: Math.max(2, x(item.b) - x(item.a)),
-          height: 5, rx: 2, fill: col
-        }, svg);
-        r.appendChild(el('title', {}, null)).textContent =
-          `ORF ${item.a + 1}..${item.b} ${item.o.strand === 1 ? '→' : '←'} ${item.o.length_aa} aa`;
+        const x1 = x(item.a), x2 = Math.max(x(item.b), x1 + 4);
+        const fwd = item.o.strand === 1;
+        const h = 5, half = h / 2;
+        el('rect', { class: 'orfbar', x: x1, y, width: x2 - x1, height: h, rx: 1.5, fill: col }, svg);
+        /* A big arrow head sits ON the start codon, pointing the way the frame
+           reads. That is the left end on the plus strand and the right end on
+           the minus strand, which is the part that is otherwise easy to miss. */
+        const sx = fwd ? x1 : x2, dir = fwd ? 1 : -1, hw = 7, hh = 4.5;
+        const g = el('g', { class: 'orfstart' }, svg);
+        el('path', {
+          d: `M${sx},${y - hh + half} L${sx + dir * hw},${y + half} L${sx},${y + hh + half} Z`,
+          fill: col
+        }, g);
+        el('line', { x1: sx, y1: y - hh + half, x2: sx, y2: y + hh + half,
+                     stroke: col, 'stroke-width': 2 }, g);
+        g.appendChild(el('title', {}, null)).textContent =
+          `ORF start codon at ${fwd ? item.a + 1 : item.b}, ` +
+          `reads ${fwd ? 'rightwards →' : 'leftwards ←'}\n` +
+          `${item.a + 1}..${item.b} · ${item.o.length_aa} aa`;
       });
     }
+
+    /* primer track, above the ruler, with the arrow head at the 3' end */
+    (opts.primers || []).forEach(pr => {
+      const x1 = x(pr.start), x2 = Math.max(x(pr.end), x1 + 3);
+      const y = axisY - 26;
+      const fwd = pr.strand !== -1;
+      const head = Math.min(6, Math.max(2, (x2 - x1) * 0.5));
+      const d = fwd
+        ? `M${x1},${y} L${x2 - head},${y} L${x2},${y + 3} L${x2 - head},${y + 6} L${x1},${y + 6} Z`
+        : `M${x2},${y} L${x1 + head},${y} L${x1},${y + 3} L${x1 + head},${y + 6} L${x2},${y + 6} Z`;
+      const p = el('path', { class: 'primerbar', d, fill: '#b7791f' }, svg);
+      p.appendChild(el('title', {}, null)).textContent =
+        `${pr.name} ${fwd ? '→' : '←'} ${pr.start + 1}..${pr.end}` +
+        (pr.tm ? `\nTm ${pr.tm.toFixed(1)} °C` : '');
+    });
 
     /* drag to select */
     let dragging = null;
@@ -349,6 +378,17 @@
         t.style.cursor = 'pointer';
         t.addEventListener('click', ev => { ev.stopPropagation(); opts.onFeature && opts.onFeature(a.f); });
       });
+    });
+
+    /* primers as short arcs just outside the ring */
+    (opts.primers || []).forEach(pr => {
+      const a0 = ang(pr.start), a1 = ang(Math.max(pr.end, pr.start + Math.max(1, L / 900)));
+      const headAng = Math.min((a1 - a0) * .45, 0.05) * (pr.strand === -1 ? -1 : 1);
+      const p = el('path', {
+        class: 'primerbar', d: arcPath(cx, cy, R + 4, R + 9, a0, a1, headAng), fill: '#b7791f'
+      }, svg);
+      p.appendChild(el('title', {}, null)).textContent =
+        `${pr.name} ${pr.strand === -1 ? '←' : '→'} ${pr.start + 1}..${pr.end}`;
     });
 
     /* restriction cuts outside the ring */

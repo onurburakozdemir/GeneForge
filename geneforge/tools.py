@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import threading
 import tempfile
+import time
 from typing import Any
 
 from . import bio
@@ -33,6 +34,7 @@ def _have(mod: str) -> bool:
 
 
 def capabilities() -> dict[str, Any]:
+    specs = system_specs()
     return {
         "msa": _have("pyfamsa") or bool(shutil.which("muscle")),
         "msa_engine": "FAMSA" if _have("pyfamsa") else ("MUSCLE" if shutil.which("muscle") else None),
@@ -40,9 +42,100 @@ def capabilities() -> dict[str, Any]:
         "structure": _have("biotite"),
         "pymol": bool(shutil.which("pymol")) or _have("pymol"),
         "esmfold": _have("torch") and _have("transformers"),
+        "esmfold_why": _esmfold_why(specs),
+        "esmfold_install": esmfold_install_status(),
         "blender": bool(shutil.which("blender")),
-        "specs": system_specs(),
+        "specs": specs,
     }
+
+
+def _esmfold_why(specs: dict[str, Any]) -> dict[str, Any]:
+    """Why ESMFold is or is not usable, in words the panel can show as-is."""
+    have_torch, have_tf = _have("torch"), _have("transformers")
+    ram = specs.get("ram_gb")
+    missing = [n for n, ok in (("torch", have_torch), ("transformers", have_tf)) if not ok]
+    if not missing:
+        return {"ready": True, "reason": "Installed and ready.", "can_install": False}
+    enough_ram = ram is None or ram >= 15.0
+    reason = (
+        f"Not installed. ESMFold is an extra ~5 GB download ({' and '.join(missing)} "
+        f"plus a 2.7 GB model on first run), so GeneForge leaves it out of the "
+        f"standard install."
+    )
+    if not enough_ram:
+        reason += (f" This machine reports {ram} GB of RAM and ESMFold needs about 16 GB, "
+                   f"so it would be installed but refuse to run. Use the AlphaFold 3 "
+                   f"export instead.")
+    return {
+        "ready": False,
+        "reason": reason,
+        "can_install": True,
+        "enough_ram": enough_ram,
+        "missing": missing,
+        "command": "./setup.sh --with-esmfold",
+    }
+
+
+# --------------------------------------------------------------------------
+# installing ESMFold on demand
+# --------------------------------------------------------------------------
+
+_INSTALL: dict[str, Any] = {"state": "idle", "log": [], "started": 0.0}
+_INSTALL_LOCK = threading.Lock()
+
+
+def esmfold_install_status() -> dict[str, Any]:
+    with _INSTALL_LOCK:
+        return {"state": _INSTALL["state"], "log": list(_INSTALL["log"])[-12:]}
+
+
+def start_esmfold_install(on_event=None) -> dict[str, Any]:
+    """Install torch + transformers into the running interpreter's environment.
+
+    Runs in a background thread; progress is reported through `on_event` and
+    readable at any time with esmfold_install_status().
+    """
+    import sys
+    with _INSTALL_LOCK:
+        if _INSTALL["state"] == "running":
+            return {"state": "running", "note": "an install is already running"}
+        _INSTALL.update({"state": "running", "log": ["starting pip install…"], "started": time.time()})
+
+    def say(line: str) -> None:
+        with _INSTALL_LOCK:
+            _INSTALL["log"].append(line)
+            _INSTALL["log"] = _INSTALL["log"][-200:]
+        if on_event:
+            try:
+                on_event(line)
+            except Exception:
+                pass
+
+    def run() -> None:
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade",
+               "torch", "transformers", "accelerate"]
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1)
+            for line in proc.stdout or []:
+                line = line.rstrip()
+                if line and ("Downloading" in line or "Installing" in line
+                             or "Successfully" in line or "ERROR" in line):
+                    say(line[:200])
+            code = proc.wait()
+        except Exception as exc:
+            say(f"install failed: {exc}")
+            with _INSTALL_LOCK:
+                _INSTALL["state"] = "failed"
+            return
+        ok = code == 0 and _have("torch") and _have("transformers")
+        say("ESMFold installed — reload GeneForge to use it." if ok
+            else f"pip exited with code {code}")
+        with _INSTALL_LOCK:
+            _INSTALL["state"] = "done" if ok else "failed"
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"state": "running"}
 
 
 def system_specs() -> dict[str, Any]:
@@ -392,94 +485,63 @@ def esmfold(sequence: str, device: str | None = None,
 # --------------------------------------------------------------------------
 
 PYMOL_STYLES = {
-    "cartoon": "hide everything\nshow cartoon\nspectrum count, rainbow, name CA",
-    "surface": "hide everything\nshow surface\nset transparency, 0.15\ncolor grey80",
-    "sticks": "hide everything\nshow sticks\nutil.cbaw",
-    "cartoon_bfactor": "hide everything\nshow cartoon\nspectrum b, blue_white_red",
+    "cartoon": ["hide everything", "show cartoon", "spectrum count, rainbow, name CA"],
+    "surface": ["hide everything", "show surface", "set transparency, 0.15", "color grey80"],
+    "sticks": ["hide everything", "show sticks", "util.cbaw"],
+    "cartoon_bfactor": ["hide everything", "show cartoon", "spectrum b, blue_white_red"],
 }
 
 
 def pymol_render(structure_path: str, out_png: str, style: str = "cartoon",
                  width: int = 1600, height: int = 1200, ray: bool = True,
                  bg: str = "white", timeout: int = 300) -> dict[str, Any]:
-    """Ray-traced publication render via PyMOL, run headless."""
+    """Ray-traced publication render via PyMOL, run headless.
+
+    Driven through a Python script rather than a .pml one. PyMOL's own command
+    parser does not strip quotes from arguments, so a quoted path produced a
+    file literally named '"/path/x.png".png'; unquoted paths in turn break on
+    spaces and commas. cmd.load()/cmd.png() take real Python strings and have
+    neither problem.
+    """
     exe = shutil.which("pymol")
     if not exe:
         return {"error": "PyMOL not found. Install with: mamba install -c conda-forge pymol-open-source"}
     if not os.path.exists(structure_path):
         return {"error": f"no such structure: {structure_path}"}
+    out_dir = os.path.dirname(os.path.abspath(out_png))
+    if out_dir and not os.path.isdir(out_dir):
+        return {"error": f"no such folder for the image: {out_dir}"}
     body = PYMOL_STYLES.get(style, PYMOL_STYLES["cartoon"])
-    script = f"""
-load {json.dumps(structure_path)}, mol
-{body}
-bg_color {bg}
-set ray_opaque_background, {0 if bg == 'none' else 1}
-set antialias, 2
-set ray_shadows, 0
-set specular, 0.2
-orient
-zoom complete=1, buffer=3
-{'ray %d, %d' % (width, height) if ray else ''}
-png {json.dumps(out_png)}, dpi=300
-"""
-    with tempfile.NamedTemporaryFile("w", suffix=".pml", delete=False) as fh:
+    script = "\n".join([
+        "from pymol import cmd",
+        f"cmd.load({structure_path!r}, 'mol')",
+        *[f"cmd.do({line!r})" for line in body],
+        f"cmd.bg_color({bg!r})",
+        f"cmd.set('ray_opaque_background', {0 if bg == 'none' else 1})",
+        "cmd.set('antialias', 2)",
+        "cmd.set('ray_shadows', 0)",
+        "cmd.set('specular', 0.2)",
+        "cmd.orient()",
+        "cmd.zoom('all', buffer=3, complete=1)",
+        f"cmd.png({out_png!r}, width={int(width)}, height={int(height)}, "
+        f"dpi=300, ray={1 if ray else 0})",
+        # cmd.png() is asynchronous unless the image is flushed out first.
+        "cmd.sync()",
+        "",
+    ])
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
         fh.write(script)
-        pml = fh.name
+        spath = fh.name
     try:
-        proc = subprocess.run([exe, "-cq", pml], capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run([exe, "-cq", spath], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"error": f"PyMOL render timed out after {timeout}s"}
     finally:
         try:
-            os.unlink(pml)
+            os.unlink(spath)
         except OSError:
             pass
     if not os.path.exists(out_png):
         return {"error": f"PyMOL produced no image: {(proc.stderr or proc.stdout)[-400:]}"}
     return {"png": out_png, "style": style, "size": os.path.getsize(out_png),
             "width": width, "height": height}
-
-
-def blender_script(structure_path: str, out_png: str, style: str = "cartoon") -> str:
-    """A ready-to-run Molecular Nodes script.
-
-    Molecular Nodes' own maintainers describe its scripting API as in flux, so
-    GeneForge writes a script for you to run in Blender rather than driving
-    Blender headlessly and breaking on the next release.
-    """
-    return f'''"""Render {os.path.basename(structure_path)} with Molecular Nodes.
-
-Open Blender, switch to the Scripting tab, open this file and press Run.
-Requires the Molecular Nodes add-on (extensions.blender.org/add-ons/molecularnodes).
-"""
-import bpy, molecularnodes as mn
-
-# clear the default scene
-bpy.ops.object.select_all(action="SELECT")
-bpy.ops.object.delete(use_global=False)
-
-mol = mn.entities.load_local({json.dumps(structure_path)})
-try:
-    mn.blender.nodes.create_starting_node_tree(mol.object, style={json.dumps(style)})
-except Exception:
-    pass
-
-world = bpy.context.scene.world or bpy.data.worlds.new("World")
-bpy.context.scene.world = world
-world.use_nodes = True
-world.node_tree.nodes["Background"].inputs[1].default_value = 1.2
-
-scene = bpy.context.scene
-scene.render.engine = "CYCLES"
-scene.cycles.samples = 128
-scene.render.resolution_x, scene.render.resolution_y = 1920, 1440
-scene.render.filepath = {json.dumps(out_png)}
-
-bpy.ops.object.camera_add(location=(0, -60, 18), rotation=(1.28, 0, 0))
-scene.camera = bpy.context.object
-bpy.ops.object.light_add(type="AREA", location=(20, -30, 40))
-bpy.context.object.data.energy = 4000
-
-bpy.ops.render.render(write_still=True)
-print("wrote", scene.render.filepath)
-'''

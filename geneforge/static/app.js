@@ -2,10 +2,14 @@
 const GF = {
   state: { folder: '', sequences: {}, primers: [], files: [] },
   ui: {
-    activeId: null, view: 'linear', showRev: true, showAA: false, showOrfs: false,
+    activeId: null, view: 'linear', showRev: true, showOrfs: false,
+    showPrimers: true, showCuts: true,
     selection: null, dragAnchor: null, activeFeature: null,
     enzymes: ['EcoRI', 'BamHI', 'HindIII', 'XhoI', 'NdeI', 'BsaI', 'BsmBI'],
     tab: 'features', orfs: [], cuts: [], restriction: null, fileFilter: '',
+    primerSites: [],
+    // Translations the user asked for, each over one region only.
+    translations: [],
     charW: 7.7, lineH: 0, perLine: 60, metrics: null,
   },
   ws: null,
@@ -94,6 +98,7 @@ function handle(m) {
     case 'primers':
       GF.state.primers = m.primers || [];
       renderPrimerList();
+      loadPrimerSites();
       if (GF.ui.tab === 'primers') renderPanel();
       break;
     case 'files':
@@ -194,10 +199,8 @@ function renderToolbar() {
     ? `${s.seq.length.toLocaleString()} bp · ${s.topology}${s.dirty ? ' · unsaved' : (s.path ? '' : ' · not on disk')}`
     : '';
   $$('#view-toggle button').forEach(b => b.classList.toggle('on', b.dataset.view === GF.ui.view));
-  $$('#topology-toggle button').forEach(b => b.classList.toggle('on', s && b.dataset.topo === s.topology));
   const hasSel = !!(GF.ui.selection && GF.ui.selection[1] > GF.ui.selection[0]);
   $('#btn-annotate').disabled = !hasSel;
-  $('#btn-copy').disabled = !s;
   $('#btn-save').disabled = !s;
   $('#btn-save').textContent = s && s.dirty ? 'Save •' : 'Save';
 }
@@ -215,8 +218,9 @@ function renderMaps() {
     return;
   }
   const opts = {
-    selection: GF.ui.selection, cuts: GF.ui.cuts, orfs: GF.ui.orfs,
+    selection: GF.ui.selection, cuts: GF.ui.showCuts ? GF.ui.cuts : [], orfs: GF.ui.orfs,
     showOrfs: GF.ui.showOrfs, activeFeature: GF.ui.activeFeature,
+    primers: GF.ui.showPrimers ? GF.ui.primerSites : [],
     onFeature: f => selectFeature(f),
     onRange: (a, b, done) => { if (a !== null) setSelection(a, b); if (done) renderPanel(); },
   };
@@ -246,12 +250,35 @@ function measure() {
   probe.remove();
 }
 
+/* Row order, top to bottom: primers, top strand, bottom strand, translations.
+   Primer and ORF rows carry no text; the overlay draws their arrows. */
 function trackPlan() {
-  const rows = [{ k: 'fwd', cls: 't-fwd' }];
-  if (GF.ui.showAA) [0, 1, 2].forEach(f => rows.push({ k: 'aa' + f, cls: 't-aa f' + (f + 1), frame: f, strand: 1 }));
+  const rows = [];
+  if (GF.ui.showPrimers && GF.ui.primerSites.length) rows.push({ k: 'primer', cls: 't-primer' });
+  rows.push({ k: 'fwd', cls: 't-fwd' });
   if (GF.ui.showRev) rows.push({ k: 'rev', cls: 't-rev' });
-  if (GF.ui.showAA && GF.ui.showRev) [0, 1, 2].forEach(f => rows.push({ k: 'raa' + f, cls: 't-aa', frame: f, strand: -1 }));
+  GF.ui.translations.forEach(t => rows.push({ k: 'tr', cls: 't-aa', tr: t }));
   return rows;
+}
+
+/** One translation row, lettered only inside its own region. */
+function regionAaRow(seq, from, to, region, L) {
+  const out = new Array(to - from).fill(' ');
+  const a = Math.max(0, region.start), b = Math.min(L, region.end);
+  const put = (centre, aa) => {
+    if (centre >= from && centre < to) out[centre - from] = aa;
+  };
+  if (region.strand === -1) {
+    for (let cs = b - 3; cs >= a; cs -= 3) {
+      if (cs + 3 > L) continue;
+      put(cs + 1, CODON[rc(seq.substr(cs, 3))] || 'X');
+    }
+  } else {
+    for (let cs = a; cs + 3 <= b; cs += 3) {
+      put(cs + 1, CODON[seq.substr(cs, 3)] || 'X');
+    }
+  }
+  return out.join('');
 }
 
 function layout() {
@@ -263,28 +290,6 @@ function layout() {
   const rowH = 16, blockPad = 12;
   const lineH = rows.length * rowH + blockPad;
   return { gutter, per, rows, rowH, lineH, nLines: Math.ceil(s.seq.length / per) || 1 };
-}
-
-function aaRow(seq, from, to, frame, strand, L) {
-  const out = new Array(to - from).fill(' ');
-  if (strand === 1) {
-    let p = frame + Math.ceil((from - frame) / 3) * 3;
-    for (; p + 3 <= L; p += 3) {
-      const centre = p + 1;
-      if (centre >= to) break;
-      if (centre >= from) out[centre - from] = CODON[seq.substr(p, 3)] || 'X';
-    }
-  } else {
-    for (let k = frame; k + 3 <= L; k += 3) {
-      const fStart = L - k - 3, centre = fStart + 1;
-      if (centre < from) break;
-      if (centre < to) {
-        const codon = rc(seq.substr(fStart, 3));
-        out[centre - from] = CODON[codon] || 'X';
-      }
-    }
-  }
-  return out.join('');
 }
 
 function renderSeqView() {
@@ -325,7 +330,7 @@ function drawLines() {
       d.style.top = (ri * lay.rowH) + 'px';
       if (r.k === 'fwd') d.textContent = fwd;
       else if (r.k === 'rev') d.textContent = comp(fwd);
-      else d.textContent = aaRow(s.seq, from, to, r.frame, r.strand, L);
+      else if (r.k === 'tr') d.textContent = regionAaRow(s.seq, from, to, r.tr, L);
       line.appendChild(d);
     });
 
@@ -343,10 +348,43 @@ function drawLines() {
 function paintOverlay(ov, from, to, lay) {
   const s = active();
   const x = p => (p - from) * GF.ui.charW;
-  const fwdTop = 0, fwdH = lay.rowH;
+  const rowIndex = k => lay.rows.findIndex(r => r.k === k);
+  const fwdTop = Math.max(0, rowIndex('fwd')) * lay.rowH, fwdH = lay.rowH;
+
+  /* primers, drawn as a third strand above the duplex with a 3' arrow head */
+  const primerRow = rowIndex('primer');
+  if (primerRow >= 0) {
+    const pTop = primerRow * lay.rowH;
+    GF.ui.primerSites.forEach(p => {
+      if (p.end <= from || p.start >= to) return;
+      const a2 = Math.max(p.start, from), b2 = Math.min(p.end, to);
+      const w = Math.max(2, (b2 - a2) * GF.ui.charW);
+      const bar = document.createElement('div');
+      bar.className = 'ov-primer' + (p.strand === -1 ? ' rev' : '');
+      bar.style.cssText = `left:${x(a2)}px;width:${w}px;top:${pTop + 4}px`;
+      bar.title = `${p.name}  ${p.strand === -1 ? '←' : '→'} ${p.start + 1}–${p.end}` +
+                  `${p.tm ? '  Tm ' + p.tm.toFixed(1) + '°C' : ''}`;
+      ov.appendChild(bar);
+      /* the arrow head sits at the 3' end, which is where the primer extends */
+      const headAtRight = p.strand !== -1;
+      const atEdge = headAtRight ? (p.end <= to) : (p.start >= from);
+      if (atEdge) {
+        const head = document.createElement('div');
+        head.className = 'ov-primer-head' + (headAtRight ? '' : ' rev');
+        head.style.cssText = `left:${headAtRight ? x(b2) - 5 : x(a2)}px;top:${pTop + 1}px`;
+        ov.appendChild(head);
+      }
+      if (w > p.name.length * 6 + 8) {
+        const t = document.createElement('div');
+        t.className = 'ov-primer-label';
+        t.style.cssText = `left:${x(a2) + 4}px;top:${pTop - 1}px`;
+        t.textContent = p.name;
+        ov.appendChild(t);
+      }
+    });
+  }
 
   /* features: tint behind the bases plus a solid underline */
-  let lane = 0;
   (s.features || []).forEach(f => {
     (f.segments || []).forEach(([a, b]) => {
       if (b <= from || a >= to) return;
@@ -362,20 +400,34 @@ function paintOverlay(ov, from, to, lay) {
     });
   });
 
-  /* ORFs */
+  /* ORFs, with an arrow head at the start codon pointing the way it reads */
   if (GF.ui.showOrfs) {
     GF.ui.orfs.slice(0, 60).forEach(o => {
       if (o.end <= from || o.start >= to) return;
       const a2 = Math.max(o.start, from), b2 = Math.min(o.end, to);
+      const col = o.strand === 1 ? '#2f855a' : '#9c4221';
+      const top = lay.rows.length * lay.rowH + 1;
       const d = document.createElement('div');
       d.className = 'ov-orf';
-      d.style.cssText = `left:${x(a2)}px;width:${(b2 - a2) * GF.ui.charW}px;top:${lay.rows.length * lay.rowH + 1}px;background:${o.strand === 1 ? '#2f855a' : '#9c4221'}`;
+      d.style.cssText = `left:${x(a2)}px;width:${(b2 - a2) * GF.ui.charW}px;top:${top}px;background:${col}`;
+      d.title = `ORF ${o.start + 1}–${o.end} ${o.strand === 1 ? '→' : '←'} ${o.length_aa} aa`;
       ov.appendChild(d);
+      /* The start codon is o.start on the plus strand but o.end on the minus
+         strand, so the marker follows the reading direction, not the x axis. */
+      const startPos = o.strand === 1 ? o.start : o.end;
+      if (startPos >= from && startPos <= to) {
+        const h = document.createElement('div');
+        h.className = 'ov-orf-start' + (o.strand === 1 ? '' : ' rev');
+        h.style.cssText = `left:${x(startPos) - (o.strand === 1 ? 0 : 7)}px;top:${top - 3}px;` +
+          `border-left-color:${col};border-right-color:${col}`;
+        h.title = `start codon, reads ${o.strand === 1 ? 'rightwards →' : 'leftwards ←'}`;
+        ov.appendChild(h);
+      }
     });
   }
 
   /* restriction cuts */
-  GF.ui.cuts.forEach(c => {
+  (GF.ui.showCuts ? GF.ui.cuts : []).forEach(c => {
     if (c.pos < from || c.pos >= to) return;
     const d = document.createElement('div');
     d.className = 'ov-cut';
@@ -420,8 +472,9 @@ function setSelection(a, b) {
 
 function mapOpts() {
   return {
-    selection: GF.ui.selection, cuts: GF.ui.cuts, orfs: GF.ui.orfs,
+    selection: GF.ui.selection, cuts: GF.ui.showCuts ? GF.ui.cuts : [], orfs: GF.ui.orfs,
     showOrfs: GF.ui.showOrfs, activeFeature: GF.ui.activeFeature,
+    primers: GF.ui.showPrimers ? GF.ui.primerSites : [],
     onFeature: f => selectFeature(f),
     onRange: (a, b, done) => { if (a !== null) setSelection(a, b); if (done) renderPanel(); },
   };
@@ -460,15 +513,154 @@ function renderStatus() {
   $('#hover-info').textContent = f ? `${f.label} (${f.type})` : '';
 }
 
+/* ------------------------------------------------------------ context menu */
+
+function hideCtx() { $('#ctx').classList.remove('open'); }
+
+/** Build and show the right-click menu at the pointer. */
+function showCtx(ev, items) {
+  const m = $('#ctx');
+  m.innerHTML = '';
+  items.forEach(it => {
+    if (!it) { m.appendChild(Object.assign(document.createElement('div'), { className: 'sep' })); return; }
+    if (it.header) {
+      const h = document.createElement('div');
+      h.className = 'ctxhead'; h.textContent = it.header;
+      m.appendChild(h); return;
+    }
+    const b = document.createElement('button');
+    b.textContent = it.label;
+    if (it.danger) b.className = 'danger';
+    if (it.disabled) b.disabled = true;
+    b.onclick = e => { e.stopPropagation(); hideCtx(); it.run && it.run(); };
+    m.appendChild(b);
+  });
+  m.classList.add('open');
+  /* keep it on screen */
+  const r = m.getBoundingClientRect();
+  const x = Math.min(ev.clientX, window.innerWidth - r.width - 8);
+  const y = Math.min(ev.clientY, window.innerHeight - r.height - 8);
+  m.style.left = Math.max(4, x) + 'px';
+  m.style.top = Math.max(4, y) + 'px';
+}
+
+function copySelection(mode, frame) {
+  const s = active(); if (!s) return;
+  const r = GF.ui.selection;
+  const body = { id: s.id, mode, frame: frame || 0 };
+  if (r && r[1] > r[0]) { body.start = r[0]; body.end = r[1]; }
+  post('/api/copy', body)
+    .then(res => navigator.clipboard.writeText(res.text)
+      .then(() => toast(`copied ${res.length.toLocaleString()} characters`))
+      .catch(() => toast('could not reach the clipboard')))
+    .catch(e => toast(e.message, 4000));
+}
+
+/** Translate only the selected region, shown as its own row. */
+function translateSelection(strand) {
+  const s = active(); if (!s) return;
+  const r = GF.ui.selection;
+  if (!r || r[1] <= r[0]) return toast('select a region first');
+  const t = { id: 'tr' + Date.now(), start: r[0], end: r[1], strand: strand || 1 };
+  GF.ui.translations.push(t);
+  renderSeqView();
+  const nt = s.seq.slice(r[0], r[1]);
+  const aa = translateJS(strand === -1 ? rc(nt) : nt);
+  toast(`translated ${(r[1] - r[0]).toLocaleString()} bp → ${aa.length} aa`, 3000);
+}
+
+function featureAt(pos) {
+  const s = active(); if (!s) return null;
+  const hits = (s.features || []).filter(f =>
+    (f.segments || []).some(([a, b]) => pos >= a && pos < b));
+  /* the smallest feature under the cursor is the one the user means */
+  hits.sort((p, q) => (span(p) - span(q)));
+  return hits[0] || null;
+  function span(f) { const g = f.segments; return g[g.length - 1][1] - g[0][0]; }
+}
+
+function sequenceCtx(ev, fromSeqView) {
+  const s = active(); if (!s) return;
+  /* baseAt() only means anything inside the sequence pane */
+  const pos = fromSeqView === false ? null : baseAt(ev);
+  const r = GF.ui.selection;
+  const inSel = r && r[1] > r[0] && pos !== null && pos >= r[0] && pos <= r[1];
+  if (!inSel && pos !== null && !(r && r[1] > r[0])) setSelection(pos, pos);
+  const hasSel = !!(GF.ui.selection && GF.ui.selection[1] > GF.ui.selection[0]);
+  const feat = pos === null ? null : featureAt(pos);
+  const where = hasSel
+    ? `selection ${(GF.ui.selection[0] + 1).toLocaleString()}–${GF.ui.selection[1].toLocaleString()}`
+    : 'whole sequence';
+
+  const items = [{ header: where }];
+  if (hasSel) {
+    items.push(
+      { label: 'Translate this region', run: () => translateSelection(1) },
+      { label: 'Translate, reverse strand', run: () => translateSelection(-1) },
+      { label: 'Annotate this region…', run: () => GFPanels.annotateDialog() },
+      { label: 'Design primers here', run: () => { GF.ui.tab = 'primers'; syncTabs(); renderPanel(); } },
+      null);
+  }
+  items.push(
+    { header: 'Copy' },
+    { label: 'DNA', run: () => copySelection('dna') },
+    { label: 'DNA, reverse complement', run: () => copySelection('dna_revcomp') },
+    { label: 'DNA, complement', run: () => copySelection('dna_complement') },
+    { label: 'DNA, reversed', run: () => copySelection('dna_rev') },
+    { label: 'RNA', run: () => copySelection('rna') },
+    { label: 'RNA, reverse complement', run: () => copySelection('rna_revcomp') },
+    { label: 'Protein (frame 1)', run: () => copySelection('protein', 0) },
+    { label: 'Protein (frame 2)', run: () => copySelection('protein', 1) },
+    { label: 'Protein (frame 3)', run: () => copySelection('protein', 2) },
+    { label: 'Protein, reverse strand', run: () => copySelection('protein_revcomp', 0) },
+    null,
+    { label: 'FASTA', run: () => copySelection('fasta') },
+    { label: 'GenBank record', run: () => copySelection('genbank') });
+
+  if (feat) {
+    items.push(null, { header: `${feat.label} (${feat.type})` },
+      { label: 'Select this annotation', run: () => selectFeature(feat) },
+      { label: 'Edit annotation…', run: () => GFPanels.editFeature(s, feat) },
+      { label: 'Delete annotation', danger: true, run: () => deleteFeature(s, feat) });
+  }
+  if (GF.ui.translations.length) {
+    items.push(null, { label: 'Clear translation rows', run: () => { GF.ui.translations = []; renderSeqView(); } });
+  }
+  showCtx(ev, items);
+}
+
+function deleteFeature(s, f) {
+  if (!confirm(`Delete the annotation "${f.label}"?`)) return;
+  del(`/api/sequences/${s.id}/features/${f.id}`)
+    .then(() => { if (GF.ui.activeFeature === f.id) GF.ui.activeFeature = null; toast('annotation deleted'); })
+    .catch(e => toast(e.message, 4000));
+}
+
+/* ------------------------------------------------------------ folder picker */
+
+function folderDialog() {
+  GFPanels.folderDialog();
+}
+
 /* ------------------------------------------------------------------ wiring */
 
 function setActive(id) {
   GF.ui.activeId = id;
   GF.ui.selection = null; GF.ui.activeFeature = null;
   GF.ui.orfs = []; GF.ui.cuts = []; GF.ui.restriction = null;
+  GF.ui.primerSites = []; GF.ui.translations = [];
   renderOpenList(); renderToolbar(); renderMaps(); renderSeqView(); renderPanel(); renderStatus();
   if (id && GF.ui.showOrfs) loadOrfs();
   if (id && GF.ui.enzymes.length) loadRestriction();
+  if (id) loadPrimerSites();
+}
+
+function loadPrimerSites() {
+  const s = active();
+  if (!s || !GF.state.primers.length) { GF.ui.primerSites = []; return Promise.resolve(); }
+  return api(`/api/sequences/${s.id}/primer_sites`)
+    .then(r => { GF.ui.primerSites = r.sites || []; renderSeqView(); renderMaps(); })
+    .catch(() => { GF.ui.primerSites = []; });
 }
 
 function loadOrfs() {
@@ -502,23 +694,29 @@ function wire() {
   $$('#view-toggle button').forEach(b => b.onclick = () => {
     GF.ui.view = b.dataset.view; renderToolbar(); renderMaps();
   });
-  $$('#topology-toggle button').forEach(b => b.onclick = () => {
-    const s = active(); if (!s) return;
-    patch('/api/sequences/' + s.id, { topology: b.dataset.topo }).catch(e => toast(e.message));
-  });
   $('#show-rev').onchange = e => { GF.ui.showRev = e.target.checked; renderSeqView(); };
-  $('#show-aa').onchange = e => { GF.ui.showAA = e.target.checked; renderSeqView(); };
   $('#show-orfs').onchange = e => {
     GF.ui.showOrfs = e.target.checked;
     if (GF.ui.showOrfs && !GF.ui.orfs.length) loadOrfs(); else { renderMaps(); drawLines(); }
   };
+  $('#show-primers').onchange = e => {
+    GF.ui.showPrimers = e.target.checked;
+    if (GF.ui.showPrimers && !GF.ui.primerSites.length) loadPrimerSites().then(renderSeqView);
+    else { renderSeqView(); renderMaps(); }
+  };
+  $('#show-cuts').onchange = e => { GF.ui.showCuts = e.target.checked; renderMaps(); drawLines(); };
   $('#file-filter').oninput = e => { GF.ui.fileFilter = e.target.value; renderFileList(); };
   $('#btn-save').onclick = saveActive;
   $('#btn-new').onclick = () => GFPanels.newSequenceDialog();
   $('#btn-newprimer').onclick = () => GFPanels.newPrimerDialog();
   $('#btn-annotate').onclick = () => GFPanels.annotateDialog();
-  $('#btn-copy').onclick = e => { e.stopPropagation(); GFPanels.copyMenu(); };
-  document.addEventListener('click', () => $('#copy-menu').classList.remove('open'));
+  $('#btn-folder').onclick = () => GFPanels.folderDialog();
+  document.addEventListener('click', hideCtx);
+  document.addEventListener('contextmenu', ev => {
+    /* only our own areas get a custom menu; inputs keep the system one */
+    if (ev.target.closest('#seqwrap') || ev.target.closest('#mapwrap')) return;
+    hideCtx();
+  });
 
   $$('#tabs button').forEach(b => b.onclick = () => {
     GF.ui.tab = b.dataset.tab; syncTabs(); renderPanel();
@@ -528,8 +726,22 @@ function wire() {
   const scroll = $('#seqscroll');
   scroll.addEventListener('mousedown', ev => {
     if (ev.button !== 0) return;
+    hideCtx();
     const p = baseAt(ev); if (p === null) return;
     GF.ui.dragAnchor = p; setSelection(p, p); ev.preventDefault();
+  });
+  scroll.addEventListener('contextmenu', ev => { ev.preventDefault(); sequenceCtx(ev); });
+  $('#mapwrap').addEventListener('contextmenu', ev => {
+    const g = ev.target.closest('.feat');
+    const s = active(); if (!s) return;
+    ev.preventDefault();
+    if (!g) return sequenceCtx(ev, false);
+    const f = (s.features || []).find(x => x.id === g.dataset.featureId);
+    if (!f) return;
+    showCtx(ev, [{ header: `${f.label} (${f.type})` },
+      { label: 'Select this annotation', run: () => selectFeature(f) },
+      { label: 'Edit annotation…', run: () => GFPanels.editFeature(s, f) },
+      { label: 'Delete annotation', danger: true, run: () => deleteFeature(s, f) }]);
   });
   scroll.addEventListener('mousemove', ev => {
     if (GF.ui.dragAnchor === null) return;
@@ -559,6 +771,9 @@ function wire() {
   document.addEventListener('keydown', ev => {
     const typing = /INPUT|TEXTAREA|SELECT/.test(ev.target.tagName);
     if ((ev.metaKey || ev.ctrlKey) && ev.key === 's') { ev.preventDefault(); saveActive(); return; }
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === 'o' && !typing) {
+      ev.preventDefault(); GFPanels.folderDialog(); return;
+    }
     if ((ev.metaKey || ev.ctrlKey) && ev.key === 'a' && !typing) {
       const s = active(); if (s) { ev.preventDefault(); setSelection(0, s.seq.length); }
       return;
@@ -624,6 +839,7 @@ Object.assign(GF, {
   renderAll, refreshActive, renderOpenList, renderToolbar, renderMaps,
   renderSeqView, renderStatus, drawLines, setSelection, scrollToBase,
   mapOpts, saveActive, openPath, translateJS, rc, comp, active,
+  loadPrimerSites, deleteFeature, showCtx, hideCtx, copySelection, translateSelection,
 });
 
 document.addEventListener('DOMContentLoaded', wire);

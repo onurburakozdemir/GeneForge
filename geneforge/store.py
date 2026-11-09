@@ -76,6 +76,31 @@ class Store:
                 "files": seqio.list_folder(self.folder),
             }
 
+    def set_folder(self, folder: str) -> dict[str, Any]:
+        """Point the workbench at another folder, the way an editor does.
+
+        Open sequences are left alone: switching folders changes what the file
+        list shows, it does not close or write anything.
+        """
+        target = os.path.abspath(os.path.expanduser(folder))
+        if not os.path.exists(target):
+            raise FileNotFoundError(f"no such folder: {target}")
+        if not os.path.isdir(target):
+            raise NotADirectoryError(f"not a folder: {target}")
+        with self._lock:
+            self.folder = target
+            self._self_writes.clear()
+        obs, self._observer = self._observer, None
+        if obs is not None:
+            try:
+                obs.stop()
+            except Exception:
+                pass
+        self.start_watching()
+        snap = self.snapshot()
+        self.broadcast({"type": "state", **snap})
+        return {"folder": target, "files": snap["files"]}
+
     def get(self, seq_id: str) -> dict[str, Any]:
         with self._lock:
             seq = self.sequences.get(seq_id)

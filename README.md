@@ -35,29 +35,43 @@ them in, or by clicking them in the folder list.
 **Autosave is off.** Edits live in memory until you press Save, and saving over
 an existing file asks first. Turn autosave on with `--autosave` if you want it.
 
+## Working in a folder
+
+GeneForge works the way an editor does: you point it at a folder and everything
+in it shows up in the sidebar. **Open folder…** in the top bar (or ⌘O) browses
+to another one. Switching folders only changes what the file list shows — it
+opens nothing, writes nothing and closes nothing you have open.
+
 ## What it does
 
 **Viewing** — linear and circular maps (or both), feature arrows with their
-GenBank/ApE colours, dual-strand sequence view, three-frame translation, ORF
-tracks, restriction cut marks. The sequence view is virtualised, so large
-plasmids stay responsive.
+GenBank/ApE colours, and a double-stranded sequence view: the top strand reads
+dark, the bottom strand a step lighter. ORF tracks carry an arrow head on the
+start codon pointing the way the frame reads. Saved primers appear as a third
+strand above the duplex, and on the map, with the arrow head at the 3' end.
+The sequence view is virtualised, so large plasmids stay responsive.
 
 **Editing** — select by dragging on the sequence or the map; annotate a
 selection; edit, recolour or delete features; rename; switch topology. Feature
 coordinates follow sequence edits automatically.
 
-**Special copy** — forward DNA, reverse complement, complement, reversed, RNA
-(either strand), protein in any of three frames or from the reverse strand,
-FASTA, or the whole GenBank record.
+**Right-click** — the menu over a selection is where the work happens: copy it
+as DNA, reverse complement, complement, reversed, RNA either way, protein in
+any frame or from the reverse strand, FASTA or the whole GenBank record;
+translate *that region only*, on either strand, as its own row under the
+duplex; annotate it; or jump to primer design. Right-clicking an annotation —
+in the sequence, on the map or in the features list — offers edit and delete.
 
-**Restriction** — recognition-site driven, not cut-driven, so a site is shown
-even when its cut lands off the end of a linear fragment (common for designed
-Golden Gate ends, and a case Biopython's own `search()` reports as *no sites*).
-Reports cut positions, overhang sequence and type, fragments, and non-cutters.
+**Cutting enzymes** — keep your own list: type a name to add one, click its ×
+to drop it, and show or hide the cut marks with one button. Analysis is
+recognition-site driven, not cut-driven, so a site is shown even when its cut
+lands off the end of a linear fragment (common for designed Golden Gate ends,
+and a case Biopython's own `search()` reports as *no sites*). Reports cut
+positions, overhang sequence and type, fragments, and non-cutters.
 
 **Primers** — primer3 design over a selection, with real Tm, GC, hairpin and
 self-dimer values. Saved primers are annotated onto the construct as
-`primer_bind` features.
+`primer_bind` features and drawn on both the sequence and the map.
 
 **Alignment** — FAMSA (or MUSCLE). Equal-length inputs are compared
 column-wise, which is exact and keeps numbering identical to the reference.
@@ -73,9 +87,12 @@ any chosen region, producing a new sequence with the change annotated.
 **Assembly** — Golden Gate (Type IIS overhang matching) and Gibson, via pydna.
 
 **Structure** — built-in 3D viewer (3Dmol.js, offline) for PDB/CIF; PyMOL
-ray-traced renders; an AlphaFold 3 job builder that writes a correct
-`alphafoldserver.com` job file, including both DNA strands for a duplex and the
-right ion count; optional local ESMFold.
+ray-traced renders, shown in the panel as well as written next to the
+structure; an AlphaFold 3 job builder that takes as many components as the
+complex needs — several protein chains, DNA, RNA and ions, each with a copy
+count — and writes a correct `alphafoldserver.com` job file, including both
+strands for a duplex; optional local ESMFold, which the Tools panel will
+install for you if you want it.
 
 ## Driving it from an agent
 
@@ -104,13 +121,22 @@ primer3 design, protein mutation, FAMSA alignment, ViennaRNA folding and the
 RBS check, the AlphaFold 3 job builder, and the full UI driven through a real
 browser.
 
-Not yet run on macOS: the `.app` bundle, the pywebview window, PyMOL on
-arm64, and ESMFold on Apple Silicon. These were written without a Mac to test
-on. `setup.sh` verifies each library and reports failures; if something
-misbehaves on first launch, the log will say so.
+Run on macOS 27 / Apple Silicon: the `.app` bundle, the pywebview window, and
+PyMOL ray-traced rendering on osx-arm64 all work. `setup.sh` verifies each
+library and reports failures; if something misbehaves on first launch, the log
+will say so.
+
+Still untested here: ESMFold on Apple Silicon, because it is not installed by
+default. `tools.esmfold` uses CPU unless CUDA is present — MPS historically
+misses ops ESMFold needs — and it refuses to run below 15 GB of RAM rather
+than thrashing.
 
 ESMFold is single-chain protein only — no DNA, no multimers, no metals. For a
 zinc-finger–DNA complex use the AlphaFold 3 export instead.
+
+Molecular Nodes is not supported. GeneForge used to write a Blender script you
+had to run by hand, which produced no image on its own; that was removed rather
+than left looking like a render button. PyMOL is the render path.
 
 Molecular Nodes is supported by writing a ready-to-run Blender script rather
 than driving Blender headlessly, because its maintainers describe the scripting

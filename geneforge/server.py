@@ -54,6 +54,37 @@ def create_app(store: Store) -> FastAPI:
     def files():
         return {"files": seqio.list_folder(store.folder)}
 
+    @app.get("/api/folder/browse")
+    def browse_folder(path: str = Query("")):
+        """Sub-folders of `path`, for picking a working folder from the UI."""
+        target = os.path.abspath(os.path.expanduser(path or store.folder))
+        if not os.path.isdir(target):
+            raise HTTPException(404, f"no such folder: {target}")
+        try:
+            entries = sorted(
+                (e for e in os.scandir(target) if e.is_dir() and not e.name.startswith(".")),
+                key=lambda e: e.name.lower())
+        except PermissionError:
+            raise HTTPException(403, f"not allowed to read {target}")
+        parent = os.path.dirname(target)
+        return {
+            "path": target,
+            "parent": parent if parent != target else None,
+            "home": os.path.expanduser("~"),
+            "folders": [{"name": e.name, "path": e.path} for e in entries[:400]],
+            "n_sequences": len(seqio.list_folder(target)),
+        }
+
+    @app.post("/api/folder")
+    def set_folder(body: dict = Body(...)):
+        path = body.get("path")
+        if not path:
+            raise HTTPException(400, "path required")
+        try:
+            return store.set_folder(path)
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            raise HTTPException(404, str(exc))
+
     @app.post("/api/open")
     def open_file(body: dict = Body(...)):
         path = body.get("path")
@@ -296,6 +327,20 @@ def create_app(store: Store) -> FastAPI:
         store.delete_primer(primer_id)
         return {"ok": True}
 
+    @app.get("/api/sequences/{ref}/primer_sites")
+    def primer_sites(ref: str, min_anneal: int = Query(15)):
+        """Where every saved primer lands on this sequence, for the map view."""
+        target = resolve(ref)
+        out = []
+        for primer in store.primers.values():
+            for site in bio.binding_sites(primer["seq"], target["seq"],
+                                          target["topology"], min_anneal):
+                if site["full"] or site["anneal"] >= min_anneal:
+                    out.append({"id": primer["id"], "name": primer["name"],
+                                "seq": primer["seq"], "tm": primer.get("tm"),
+                                **site})
+        return {"sites": out}
+
     @app.post("/api/primers/bind")
     def bind(body: dict = Body(...)):
         target = resolve(body["id"])
@@ -405,17 +450,33 @@ def create_app(store: Store) -> FastAPI:
         out_png = body.get("out") or os.path.splitext(path)[0] + f"_{body.get('style','cartoon')}.png"
         if not os.path.isabs(out_png):
             out_png = os.path.join(store.folder, out_png)
-        if body.get("engine") == "blender":
-            script = tools.blender_script(path, out_png, body.get("style", "cartoon"))
-            spath = os.path.splitext(out_png)[0] + "_blender.py"
-            with open(spath, "w") as fh:
-                fh.write(script)
-            return {"script": spath, "png_will_be": out_png, "engine": "blender"}
         out = tools.pymol_render(path, out_png, body.get("style", "cartoon"),
                                  int(body.get("width", 1600)), int(body.get("height", 1200)))
         if out.get("error"):
             raise HTTPException(400, out["error"])
+        store.broadcast({"type": "files", "files": seqio.list_folder(store.folder)})
         return out
+
+    @app.get("/api/image")
+    def image(path: str = Query(...)):
+        """Serve a rendered PNG so the panel can show it instead of a file path."""
+        from fastapi.responses import FileResponse
+        if not os.path.isabs(path):
+            path = os.path.join(store.folder, path)
+        if os.path.splitext(path)[1].lower() not in {".png", ".jpg", ".jpeg"}:
+            raise HTTPException(400, "not an image")
+        if not os.path.exists(path):
+            raise HTTPException(404, "no such image")
+        return FileResponse(path)
+
+    @app.post("/api/esmfold/install")
+    def esmfold_install(body: dict = Body(default={})):
+        return tools.start_esmfold_install(
+            on_event=lambda line: store.notice(line, "info", origin="install"))
+
+    @app.get("/api/esmfold/install")
+    def esmfold_install_status():
+        return tools.esmfold_install_status()
 
     @app.get("/api/structures")
     def structures():
@@ -551,7 +612,15 @@ def create_app(store: Store) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def index():
         with open(os.path.join(STATIC_DIR, "index.html")) as fh:
-            return fh.read()
+            return HTMLResponse(fh.read(), headers={"Cache-Control": "no-store"})
+
+    @app.middleware("http")
+    async def no_cache_static(request, call_next):
+        """The front end has no build step, so a reload must show the new file."""
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

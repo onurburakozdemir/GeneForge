@@ -48,12 +48,20 @@
     const feats = s.features || [];
     const r = sel(), hasSel = r && r[1] > r[0];
     p.innerHTML = `
+      <div class="ptitle">Molecule</div>
+      <div class="field"><label>Topology</label><select name="topo">
+        <option value="linear" ${s.topology !== 'circular' ? 'selected' : ''}>linear</option>
+        <option value="circular" ${s.topology === 'circular' ? 'selected' : ''}>circular</option>
+      </select></div>
       <div class="ptitle">Selection</div>
       ${hasSel
         ? `<div class="hint">${(r[0] + 1).toLocaleString()}–${r[1].toLocaleString()} · ${(r[1] - r[0]).toLocaleString()} bp</div>
            <button class="btn" data-a="annotate" style="width:100%;margin:5px 0">Annotate selection</button>`
-        : '<div class="hint">Drag across the sequence or the map to select.</div>'}
+        : '<div class="hint">Drag across the sequence or the map to select. Right-click for copy, translate and annotate.</div>'}
       <div class="ptitle">Features (${feats.length})</div><div id="featlist"></div>`;
+    p.querySelector('[name=topo]').onchange = e =>
+      GF.patch('/api/sequences/' + s.id, { topology: e.target.value })
+        .catch(err => GF.toast(err.message));
     const list = p.querySelector('#featlist');
     if (!feats.length) list.innerHTML = '<div class="empty">none</div>';
     feats.forEach(f => {
@@ -62,9 +70,20 @@
       row.className = 'row' + (GF.ui.activeFeature === f.id ? ' active' : '');
       row.innerHTML = `<span class="swatch" style="background:${esc(f.color)}"></span>
         <span class="nm" title="${esc(f.type)}">${esc(f.label)}</span>
-        <span class="co">${(a + 1).toLocaleString()}–${b.toLocaleString()}${f.strand === -1 ? ' ←' : f.strand === 1 ? ' →' : ''}</span>`;
-      row.onclick = () => GF.selectFeature(f);
+        <span class="co">${(a + 1).toLocaleString()}–${b.toLocaleString()}${f.strand === -1 ? ' ←' : f.strand === 1 ? ' →' : ''}</span>
+        <span class="x" title="Delete this annotation">×</span>`;
+      row.onclick = ev => {
+        if (ev.target.classList.contains('x')) { GF.deleteFeature(s, f); return; }
+        GF.selectFeature(f);
+      };
       row.ondblclick = () => editFeature(s, f);
+      row.oncontextmenu = ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        GF.showCtx(ev, [{ header: `${f.label} (${f.type})` },
+          { label: 'Select', run: () => GF.selectFeature(f) },
+          { label: 'Edit…', run: () => editFeature(s, f) },
+          { label: 'Delete annotation', danger: true, run: () => GF.deleteFeature(s, f) }]);
+      };
       list.appendChild(row);
     });
     const ann = p.querySelector('[data-a=annotate]');
@@ -135,32 +154,65 @@
 
   function enzymesPanel(p, s) {
     const r = GF.ui.restriction;
-    p.innerHTML = `<div class="ptitle">Enzymes</div>
-      <div class="field"><input name="enzq" placeholder="add enzyme (e.g. BsmBI)…"></div>
+    const shown = GF.ui.showCuts;
+    p.innerHTML = `<div class="ptitle">Cutting enzymes</div>
+      <div class="field"><input name="enzq" list="enzopts" placeholder="add an enzyme, then press Enter…">
+        <datalist id="enzopts">${COMMON.map(n => `<option>${n}</option>`).join('')}</datalist></div>
       <div id="chips" style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 2px 8px"></div>
+      <div class="frow" style="margin:0 2px 6px">
+        <button class="btn ${shown ? 'primary' : ''}" data-a="toggle">
+          ${shown ? 'Hide cut sites' : 'Show cut sites'}</button>
+        <button class="btn" data-a="clear">Remove all</button></div>
       <div class="frow" style="margin:0 2px 8px">
         <button class="btn" data-a="common">Common set</button>
         <button class="btn" data-a="unique">Unique only</button></div>
       <div id="enzresult"></div>`;
     const chips = p.querySelector('#chips');
+    if (!GF.ui.enzymes.length) {
+      chips.innerHTML = '<span class="hint">none yet — add one above</span>';
+    }
     GF.ui.enzymes.forEach(n => {
       const c = document.createElement('span');
-      c.className = 'tag'; c.style.cursor = 'pointer'; c.title = 'remove';
-      c.textContent = n + ' ×';
-      c.onclick = () => { GF.ui.enzymes = GF.ui.enzymes.filter(x => x !== n); GF.loadRestriction().then(render); };
+      c.className = 'tag';
+      c.textContent = n;
+      const x = document.createElement('span');
+      x.className = 'chipx'; x.textContent = '×';
+      x.title = `remove ${n}`;
+      x.style.cursor = 'pointer';
+      x.onclick = () => {
+        GF.ui.enzymes = GF.ui.enzymes.filter(v => v !== n);
+        GF.loadRestriction().then(render);
+      };
+      c.appendChild(x);
       chips.appendChild(c);
     });
     const q = p.querySelector('[name=enzq]');
-    q.onkeydown = e => {
-      if (e.key !== 'Enter') return;
+    const add = () => {
       const n = q.value.trim();
-      if (n && GF.ui.enzymes.indexOf(n) < 0) { GF.ui.enzymes.push(n); q.value = ''; GF.loadRestriction().then(render); }
+      if (!n) return;
+      if (GF.ui.enzymes.some(v => v.toLowerCase() === n.toLowerCase())) {
+        GF.toast(`${n} is already in the list`); q.value = ''; return;
+      }
+      GF.ui.enzymes.push(n); q.value = '';
+      GF.loadRestriction().then(render);
+    };
+    q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+    p.querySelector('[data-a=toggle]').onclick = () => {
+      GF.ui.showCuts = !GF.ui.showCuts;
+      const box = document.querySelector('#show-cuts');
+      if (box) box.checked = GF.ui.showCuts;
+      GF.renderMaps(); GF.drawLines(); render();
+    };
+    p.querySelector('[data-a=clear]').onclick = () => {
+      GF.ui.enzymes = []; GF.ui.cuts = []; GF.ui.restriction = null;
+      GF.renderMaps(); GF.drawLines(); render();
     };
     p.querySelector('[data-a=common]').onclick = () => { GF.ui.enzymes = COMMON.slice(); GF.loadRestriction().then(render); };
     p.querySelector('[data-a=unique]').onclick = () => {
       if (!r) return; GF.ui.enzymes = r.unique.slice(); GF.loadRestriction().then(render);
     };
     const out = p.querySelector('#enzresult');
+    if (!GF.ui.enzymes.length) { out.innerHTML = '<div class="empty">no enzymes chosen</div>'; return; }
     if (!r) { out.innerHTML = '<div class="empty">analysing…</div>'; return; }
     const cut = r.enzymes || [];
     out.innerHTML = `<div class="ptitle">Sites</div>
@@ -181,6 +233,7 @@
 
   window.GFPanels = { render, annotateDialog, featuresPanel, enzymesPanel, editFeature };
   window.__GFP = { modal, val, esc, act, sel, render, get CAPS() { return CAPS; },
+                   setCaps(c) { CAPS = c; },
                    set viewer(v) { viewer = v; }, get viewer() { return viewer; } };
 })();
 
@@ -238,6 +291,28 @@
     };
   }
 
+  /** Say why ESMFold is unavailable, and offer to install it. */
+  function esmfoldNote(cap) {
+    if (cap.esmfold) return '';
+    const why = cap.esmfold_why || {};
+    const st = (cap.esmfold_install || {}).state;
+    if (st === 'running') {
+      return `<div class="hint" style="color:#c05621">Installing ESMFold… this takes a
+        while. Progress appears at the top of the window; you can keep working.</div>`;
+    }
+    if (st === 'done') {
+      return `<div class="hint" style="color:#2f855a">ESMFold installed — reload
+        GeneForge (⌘R) to use it.</div>`;
+    }
+    const reason = why.reason || 'Not installed.';
+    return `<div class="hint" style="color:#c05621">${esc(reason)}</div>
+      ${st === 'failed' ? '<div class="hint" style="color:#c53030">The last install attempt failed. The log is in the notices at the top.</div>' : ''}
+      <button class="btn" data-a="esminstall" style="width:100%;margin:2px">
+        Install ESMFold now (~5 GB)</button>
+      <div class="hint">Or from a terminal, in the GeneForge folder:
+        <span class="mono">${esc(why.command || './setup.sh --with-esmfold')}</span></div>`;
+  }
+
   function toolsPanel(p, s) {
     const r = sel(), hasSel = r && r[1] > r[0], cap = H.CAPS || {};
     const warn = (ok, what) => ok ? '' : `<div class="hint" style="color:#c05621">${what} not installed</div>`;
@@ -266,7 +341,7 @@
       <div class="ptitle">Structure prediction</div>
       <button class="btn" data-a="af3" style="width:100%;margin:2px">Build AlphaFold 3 job…</button>
       <button class="btn" data-a="esm" style="width:100%;margin:2px" ${cap.esmfold ? '' : 'disabled'}>Fold ${hasSel ? 'selection' : 'CDS'} with ESMFold</button>
-      ${warn(cap.esmfold, 'ESMFold (torch + transformers)')}
+      ${esmfoldNote(cap)}
       ${cap.specs && cap.specs.ram_gb ? `<div class="hint">This machine: ${cap.specs.ram_gb} GB RAM · ${cap.specs.cpus} cores${cap.specs.chip ? ' · ' + esc(cap.specs.chip) : ''}</div>` : ''}
 
       <div class="ptitle">Assembly</div>
@@ -324,6 +399,22 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
     p.querySelector('[data-a=af3]').onclick = () => GFPanels.af3Dialog();
     p.querySelector('[data-a=gg]').onclick = () => GFPanels.assemblyDialog('goldengate');
     p.querySelector('[data-a=gib]').onclick = () => GFPanels.assemblyDialog('gibson');
+    const inst = p.querySelector('[data-a=esminstall]');
+    if (inst) inst.onclick = () => {
+      const why = (H.CAPS || {}).esmfold_why || {};
+      const extra = why.enough_ram === false
+        ? '\n\nNote: this machine has less RAM than ESMFold needs, so it will install but refuse to run.'
+        : '';
+      if (!confirm('Download and install ESMFold?\n\nThis fetches about 5 GB (PyTorch and '
+        + 'transformers), and the model itself downloads on first use.' + extra)) return;
+      inst.disabled = true; inst.textContent = 'installing…';
+      GF.post('/api/esmfold/install', {})
+        .then(() => {
+          GF.toast('ESMFold install started — watch the notices at the top', 5000);
+          pollInstall();
+        })
+        .catch(e => { inst.disabled = false; inst.textContent = 'Install ESMFold now (~5 GB)'; GF.toast(e.message, 6000); });
+    };
     const esm = p.querySelector('[data-a=esm]');
     if (esm && !esm.disabled) esm.onclick = () => {
       esm.disabled = true; esm.textContent = 'folding… may take minutes';
@@ -335,6 +426,20 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
         if (res.path) { GF.ui.tab = '3d'; GF.syncTabs(); H.render(); GFPanels.viewStructure(res.path); }
       }).catch(e => { esm.disabled = false; esm.textContent = 'Fold with ESMFold'; GF.toast(e.message, 7000); });
     };
+  }
+
+  /** Watch an install until it stops, refreshing what the panel reports. */
+  let pollTimer = null;
+  function pollInstall() {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(() => {
+      GF.api('/api/capabilities').then(c => {
+        H.setCaps(c);
+        if (GF.ui.tab === 'tools') H.render();
+        const st = (c.esmfold_install || {}).state;
+        if (st === 'running') pollInstall();
+      }).catch(() => { });
+    }, 4000);
   }
 
   GFPanels.primersPanel = primersPanel;
@@ -410,40 +515,91 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
       }, 'Create variant');
   }
 
+  /* AlphaFold 3 jobs are a list of components, as many as the complex needs:
+     several protein chains, several DNA or RNA strands, and ions. */
+  const AF3_IONS = ['ZN', 'MG', 'CA', 'NA', 'K', 'CL', 'MN', 'FE', 'CU', 'CO', 'NI'];
+
   function af3Dialog() {
     const list = Object.values(GF.state.sequences);
-    modal('AlphaFold 3 job', `
+    let rows = [];
+    let nextKey = 1;
+
+    const sourceOptions = sel =>
+      list.map(s => `<option value="${s.id}" ${sel === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+
+    const rowHtml = r => {
+      const isIon = r.kind === 'ion';
+      return `<div class="af3row" data-k="${r.key}"
+            style="border:1px solid var(--line);border-radius:6px;padding:7px;margin:6px 0">
+        <div class="frow" style="align-items:flex-end">
+          <div class="field" style="flex:0 0 108px"><label>Component</label>
+            <select name="kind_${r.key}">
+              <option value="protein" ${r.kind === 'protein' ? 'selected' : ''}>protein</option>
+              <option value="dna_ds" ${r.kind === 'dna_ds' ? 'selected' : ''}>DNA, duplex</option>
+              <option value="dna_ss" ${r.kind === 'dna_ss' ? 'selected' : ''}>DNA, 1 strand</option>
+              <option value="rna" ${r.kind === 'rna' ? 'selected' : ''}>RNA</option>
+              <option value="ion" ${isIon ? 'selected' : ''}>ion</option>
+            </select></div>
+          <div class="field" style="flex:1">${isIon
+            ? `<label>Ion</label><select name="ion_${r.key}">
+                 ${AF3_IONS.map(i => `<option ${r.ion === i ? 'selected' : ''}>${i}</option>`).join('')}
+               </select>`
+            : `<label>From</label><select name="src_${r.key}">${sourceOptions(r.src)}</select>`}</div>
+          <div class="field" style="flex:0 0 62px"><label>Copies</label>
+            <input name="n_${r.key}" type="number" min="1" value="${r.count || 1}"></div>
+          <button class="btn" data-del="${r.key}" title="remove"
+                  style="flex:0 0 auto;color:var(--err)">×</button>
+        </div>
+        ${isIon ? '' : `<label class="chk" style="margin-top:4px">
+          <input type="checkbox" name="selonly_${r.key}"> use only my current selection</label>`}
+      </div>`;
+    };
+
+    const addRow = (kind) => { rows.push({ key: nextKey++, kind: kind || 'protein', count: 1, ion: 'ZN' }); };
+    if (list.length) addRow('protein');
+
+    const m = modal('AlphaFold 3 job', `
       <div class="field"><label>Job name</label><input name="jn" value="geneforge_job"></div>
-      ${list.map(s => `<div class="field"><label>${esc(s.name)}</label><select name="role_${s.id}">
-        <option value="">ignore</option>
-        <option value="protein">protein — translate CDS</option>
-        <option value="protein_sel">protein — translate selection</option>
-        <option value="dna_ds">DNA — double-stranded</option>
-        <option value="dna_ss">DNA — single strand</option></select></div>`).join('')}
-      <div class="frow">
-        <div class="field"><label>Zn²⁺ ions</label><input name="zn" type="number" value="0" min="0"></div>
-        <div class="field"><label>Mg²⁺ ions</label><input name="mg" type="number" value="0" min="0"></div></div>
-      <div class="hint">C2H2 zinc fingers need one Zn per finger — a three-finger domain such as Zif268 takes 3 Zn per chain. Double-stranded DNA is written as both strands, which AlphaFold 3 requires.</div>`,
+      <div id="af3rows"></div>
+      <div class="frow" style="margin:2px 0 6px">
+        <button class="btn" data-add="protein">+ protein</button>
+        <button class="btn" data-add="dna_ds">+ DNA</button>
+        <button class="btn" data-add="rna">+ RNA</button>
+        <button class="btn" data-add="ion">+ ion</button></div>
+      <div class="hint">Add one component per chain. C2H2 zinc fingers need one Zn per
+        finger — a three-finger domain such as Zif268 takes 3 Zn per chain. A duplex is
+        written as both strands, which AlphaFold 3 requires.</div>`,
       box => {
-        const proteins = [], dna = [];
-        for (const s of list) {
-          const role = val(box, 'role_' + s.id);
-          if (!role) continue;
-          if (role.indexOf('protein') === 0) {
-            let a = 0, b = s.seq.length, st = 1;
+        const proteins = [], dna = [], rna = [], ions = [];
+        const pastes = [];
+        for (const r of rows) {
+          const kind = val(box, 'kind_' + r.key);
+          const count = Math.max(1, parseInt(val(box, 'n_' + r.key), 10) || 1);
+          if (kind === 'ion') {
+            ions.push({ ion: val(box, 'ion_' + r.key), count });
+            continue;
+          }
+          const srcId = val(box, 'src_' + r.key);
+          const s = GF.state.sequences[srcId];
+          if (!s) { pastes.push(r.key); continue; }
+          const selOnly = (box.querySelector(`[name=selonly_${r.key}]`) || {}).checked;
+          let a = 0, b = s.seq.length, st = 1;
+          if (selOnly && s.id === GF.ui.activeId && sel()) { a = sel()[0]; b = sel()[1]; }
+          else if (kind === 'protein') {
             const cds = (s.features || []).find(f => f.type === 'CDS');
-            if (role === 'protein_sel' && s.id === GF.ui.activeId && sel()) { a = sel()[0]; b = sel()[1]; }
-            else if (cds) { a = cds.segments[0][0]; b = cds.segments[cds.segments.length - 1][1]; st = cds.strand || 1; }
-            let nt = s.seq.slice(a, b);
-            if (st === -1) nt = GF.rc(nt);
-            proteins.push({ sequence: GF.translateJS(nt), count: 1 });
-          } else dna.push({ sequence: s.seq, double: role === 'dna_ds', count: 1 });
+            if (cds) { a = cds.segments[0][0]; b = cds.segments[cds.segments.length - 1][1]; st = cds.strand || 1; }
+          }
+          let nt = s.seq.slice(a, b);
+          if (st === -1) nt = GF.rc(nt);
+          if (kind === 'protein') proteins.push({ sequence: GF.translateJS(nt), count });
+          else if (kind === 'rna') rna.push({ sequence: nt, count });
+          else dna.push({ sequence: nt, double: kind === 'dna_ds', count });
         }
-        if (!proteins.length && !dna.length) { GF.toast('assign at least one chain'); return false; }
-        const ions = [];
-        if (+val(box, 'zn') > 0) ions.push({ ion: 'ZN', count: +val(box, 'zn') });
-        if (+val(box, 'mg') > 0) ions.push({ ion: 'MG', count: +val(box, 'mg') });
-        GF.post('/api/af3', { name: val(box, 'jn'), proteins, dna, ions, save: true }).then(res => {
+        if (pastes.length) { GF.toast('choose a sequence for every component'); return false; }
+        if (!proteins.length && !dna.length && !rna.length) {
+          GF.toast('add at least one protein, DNA or RNA component'); return false;
+        }
+        GF.post('/api/af3', { name: val(box, 'jn'), proteins, dna, rna, ions, save: true }).then(res => {
           modal('AlphaFold 3 job ready', `
             <div class="hint">${res.entities} entities · about ${res.approx_tokens} tokens</div>
             <div class="hint">Saved to:<br><span class="mono">${esc(res.path || '')}</span></div>
@@ -452,6 +608,39 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
             () => window.open('https://alphafoldserver.com/', '_blank'), 'Open AlphaFold Server');
         }).catch(e => GF.toast(e.message, 7000));
       }, 'Build job');
+
+    /* Keep what is already typed when the list is redrawn. */
+    const readBack = () => rows.forEach(r => {
+      const k = val(m.box, 'kind_' + r.key); if (k) r.kind = k;
+      const n = val(m.box, 'n_' + r.key); if (n) r.count = Math.max(1, parseInt(n, 10) || 1);
+      const s = val(m.box, 'src_' + r.key); if (s) r.src = s;
+      const i = val(m.box, 'ion_' + r.key); if (i) r.ion = i;
+    });
+
+    const draw = () => {
+      const host = m.box.querySelector('#af3rows');
+      host.innerHTML = rows.length ? rows.map(rowHtml).join('')
+        : '<div class="empty">no components yet — add one below</div>';
+      host.querySelectorAll('[data-del]').forEach(b => b.onclick = ev => {
+        ev.preventDefault();
+        readBack();
+        rows = rows.filter(r => String(r.key) !== b.dataset.del);
+        draw();
+      });
+      /* switching to or from "ion" swaps the second field, so redraw */
+      rows.forEach(r => {
+        const kindSel = m.box.querySelector(`[name=kind_${r.key}]`);
+        if (kindSel) kindSel.onchange = () => { readBack(); draw(); };
+      });
+    };
+
+    m.box.querySelectorAll('[data-add]').forEach(b => b.onclick = ev => {
+      ev.preventDefault();
+      readBack();
+      addRow(b.dataset.add);
+      draw();
+    });
+    draw();
   }
 
   function assemblyDialog(kind) {
@@ -516,31 +705,53 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
         .then(r => GF.toast('saved ' + r.path.split('/').pop())).catch(e => GF.toast(e.message, 5000)), 'Save');
   }
 
-  const COPY_ITEMS = [['DNA, forward', 'dna'], ['DNA, reverse complement', 'dna_revcomp'],
-    ['DNA, complement', 'dna_complement'], ['DNA, reversed', 'dna_rev'], null,
-    ['RNA, forward', 'rna'], ['RNA, reverse complement', 'rna_revcomp'], null,
-    ['Protein, frame 1', 'protein', 0], ['Protein, frame 2', 'protein', 1],
-    ['Protein, frame 3', 'protein', 2], ['Protein, reverse strand', 'protein_revcomp', 0], null,
-    ['FASTA', 'fasta'], ['GenBank record', 'genbank']];
+  /** Pick the working folder, the way an editor opens a project folder. */
+  function folderDialog() {
+    const m = modal('Open folder', `
+      <div class="fp-path" id="fp-now">…</div>
+      <div class="fp-list" id="fp-list"><div class="empty">loading…</div></div>
+      <div class="field" style="margin-top:8px"><label>Or type a path</label>
+        <input name="manual" placeholder="~/Documents/constructs"></div>
+      <div class="hint">Opening a folder only changes what the file list shows.
+        Nothing is opened, written or closed.</div>`,
+      box => {
+        const typed = (val(box, 'manual') || '').trim();
+        use(typed || here);
+        return true;
+      }, 'Open this folder');
 
-  function copyMenu() {
-    const s = act(); if (!s) return;
-    const m = $('#copy-menu'), r = sel();
-    m.innerHTML = `<div class="hint" style="padding:3px 8px">${r && r[1] > r[0]
-      ? 'selection ' + (r[0] + 1).toLocaleString() + '–' + r[1].toLocaleString() : 'whole sequence'}</div>` +
-      COPY_ITEMS.map(it => it === null ? '<div class="sep"></div>'
-        : `<button data-mode="${it[1]}" data-frame="${it[2] || 0}">${esc(it[0])}</button>`).join('');
-    m.classList.add('open');
-    m.querySelectorAll('button').forEach(b => b.onclick = ev => {
-      ev.stopPropagation();
-      const body = { id: s.id, mode: b.dataset.mode, frame: +b.dataset.frame };
-      if (r && r[1] > r[0]) { body.start = r[0]; body.end = r[1]; }
-      GF.post('/api/copy', body).then(res => {
-        navigator.clipboard.writeText(res.text);
-        GF.toast('copied ' + res.length.toLocaleString() + ' characters');
-        m.classList.remove('open');
-      }).catch(e => GF.toast(e.message, 4000));
-    });
+    let here = GF.state.folder;
+    const use = path => GF.post('/api/folder', { path })
+      .then(r => GF.toast('working in ' + r.folder.split('/').pop()))
+      .catch(e => GF.toast(e.message, 5000));
+
+    const load = path => GF.api('/api/folder/browse?path=' + encodeURIComponent(path || ''))
+      .then(d => {
+        here = d.path;
+        m.box.querySelector('#fp-now').textContent =
+          `${d.path}   ·   ${d.n_sequences} sequence file${d.n_sequences === 1 ? '' : 's'}`;
+        const list = m.box.querySelector('#fp-list');
+        list.innerHTML = '';
+        const add = (label, target, cls) => {
+          const row = document.createElement('div');
+          row.className = 'row' + (cls ? ' ' + cls : '');
+          row.innerHTML = `<span class="nm">${esc(label)}</span>`;
+          row.onclick = () => load(target);
+          list.appendChild(row);
+        };
+        add('🏠  Home', d.home);
+        if (d.parent) add('↑  ' + d.parent.split('/').pop() + '/..', d.parent);
+        if (!d.folders.length) {
+          const e = document.createElement('div');
+          e.className = 'empty'; e.textContent = 'no sub-folders';
+          list.appendChild(e);
+        }
+        d.folders.forEach(f => add('📁  ' + f.name, f.path));
+      })
+      .catch(e => { m.box.querySelector('#fp-list').innerHTML =
+        `<div class="empty">${esc(e.message)}</div>`; });
+
+    load(GF.state.folder);
   }
 
   function structurePanel(p) {
@@ -552,8 +763,6 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
         <option value="sticks">sticks</option><option value="cartoon_bfactor">cartoon by B-factor / pLDDT</option></select></div>
       <button class="btn" data-a="pymol" style="width:100%;margin:2px" ${cap.pymol ? '' : 'disabled'}>PyMOL ray-traced render</button>
       ${cap.pymol ? '' : '<div class="hint" style="color:#c05621">PyMOL not installed</div>'}
-      <button class="btn" data-a="blender" style="width:100%;margin:2px">Write Blender / Molecular Nodes script</button>
-      <div class="hint">Molecular Nodes' scripting API is still changing, so GeneForge writes a script you run in Blender rather than driving it headlessly.</div>
       <div id="renderout"></div>`;
     let current = null;
     fetch('/api/structures').then(r => r.json()).then(d => {
@@ -578,16 +787,12 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
       const b = e.target; b.disabled = true; b.textContent = 'rendering…';
       GF.post('/api/render', { path: current, style: p.querySelector('[name=style]').value }).then(res => {
         b.disabled = false; b.textContent = 'PyMOL ray-traced render';
+        /* show the picture, not just where it landed */
         p.querySelector('#renderout').innerHTML =
-          `<div class="hint">${(res.size / 1024).toFixed(0)} kB · ${res.width}×${res.height}<br><span class="mono">${esc(res.png)}</span></div>`;
+          `<img class="renderimg" src="/api/image?path=${encodeURIComponent(res.png)}&t=${Date.now()}">
+           <div class="hint">${(res.size / 1024).toFixed(0)} kB · ${res.width}×${res.height}
+             · saved as <span class="mono">${esc(res.png.split('/').pop())}</span></div>`;
       }).catch(err => { b.disabled = false; b.textContent = 'PyMOL ray-traced render'; GF.toast(err.message, 7000); });
-    };
-    p.querySelector('[data-a=blender]').onclick = () => {
-      if (!current) return GF.toast('pick a structure first');
-      GF.post('/api/render', { path: current, engine: 'blender', style: p.querySelector('[name=style]').value })
-        .then(res => p.querySelector('#renderout').innerHTML =
-          `<div class="hint">Script written:<br><span class="mono">${esc(res.script)}</span><br>Open it in Blender's Scripting tab and press Run.</div>`)
-        .catch(e => GF.toast(e.message, 5000));
     };
   }
 
@@ -629,5 +834,5 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
   }
 
   Object.assign(GFPanels, { render, alignDialog, mutateDialog, af3Dialog, assemblyDialog,
-    newSequenceDialog, newPrimerDialog, saveAsDialog, copyMenu, viewStructure, structurePanel });
+    newSequenceDialog, newPrimerDialog, saveAsDialog, folderDialog, viewStructure, structurePanel });
 })();

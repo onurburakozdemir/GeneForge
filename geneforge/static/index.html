@@ -10,6 +10,7 @@
 <div id="app">
   <header id="topbar">
     <div class="brand">Gene<span>Forge</span></div>
+    <button id="btn-folder" class="btn ghost" title="Open another folder (⌘O)">Open folder…</button>
     <div id="folder" title=""></div>
     <div id="notices"></div>
     <div id="conn" class="offline" title="connecting…"></div>
@@ -42,18 +43,12 @@
           ><button data-view="circular">Circular</button
           ><button data-view="split">Both</button>
         </div>
-        <div class="seg" id="topology-toggle" title="Molecule topology">
-          <button data-topo="linear">—</button><button data-topo="circular">○</button>
-        </div>
         <label class="chk"><input type="checkbox" id="show-rev" checked> Rev</label>
-        <label class="chk"><input type="checkbox" id="show-aa"> Translate</label>
         <label class="chk"><input type="checkbox" id="show-orfs"> ORFs</label>
+        <label class="chk"><input type="checkbox" id="show-primers" checked> Primers</label>
+        <label class="chk"><input type="checkbox" id="show-cuts" checked> Cut sites</label>
         <div class="spacer"></div>
         <button id="btn-annotate" class="btn" disabled>Annotate</button>
-        <div class="dropdown">
-          <button id="btn-copy" class="btn" disabled title="Copy as…">Copy ▾</button>
-          <div id="copy-menu" class="menu"></div>
-        </div>
         <button id="btn-save" class="btn primary">Save</button>
       </div>
 
@@ -66,7 +61,7 @@
     <aside id="right">
       <nav id="tabs">
         <button data-tab="features" class="on">Features</button>
-        <button data-tab="enzymes">Enzymes</button>
+        <button data-tab="enzymes">Cutting enzymes</button>
         <button data-tab="primers">Primers</button>
         <button data-tab="tools">Tools</button>
         <button data-tab="3d">3D</button>
@@ -77,6 +72,7 @@
 </div>
 
 <div id="modal-back" class="hidden"><div id="modal"></div></div>
+<div id="ctx" class="ctxmenu"></div>
 <div id="toast"></div>
 
 <script src="/static/3Dmol-min.js"></script>

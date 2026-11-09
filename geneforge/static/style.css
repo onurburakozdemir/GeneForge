@@ -112,7 +112,8 @@ svg{display:block;user-select:none}
 .cut{stroke:#c53030;stroke-width:1}
 .cuttext{font:9.5px var(--ui);fill:#c53030}
 .selband{fill:var(--sel);stroke:var(--sel-line);stroke-width:.8}
-.orfbar{opacity:.78}
+.orfbar{opacity:.85}
+.orfstart{opacity:1}
 .title{font:600 13px var(--ui);fill:var(--ink)}
 .subtitle{font:10.5px var(--mono);fill:var(--ink3)}
 
@@ -124,13 +125,26 @@ svg{display:block;user-select:none}
 .ln-num{position:absolute;left:0;width:62px;text-align:right;color:var(--ink3);font-size:10.5px;
   font-variant-numeric:tabular-nums}
 .ln-track{position:absolute;left:74px;font-size:12.5px;letter-spacing:0}
-.t-fwd{color:var(--ink)}
-.t-rev{color:var(--ink2)}
+/* the duplex: top strand reads as the sequence, bottom strand sits back a step */
+.t-fwd{color:#0c0f13;font-weight:500}
+.t-rev{color:#7b8591}
 .t-aa{color:#6b4ea8;font-size:12.5px}
 .t-aa.f1{color:#2f855a}.t-aa.f2{color:#9c4221}.t-aa.f3{color:#2b6cb0}
+.t-primer{height:16px}
 .ln-ov{position:absolute;left:74px;top:0;bottom:0;pointer-events:none}
 .ov-feat{position:absolute;border-radius:2px;opacity:.34}
 .ov-featline{position:absolute;height:2px;border-radius:1px}
+/* primers: a third strand above the duplex, arrow head at the 3' end */
+.ov-primer{position:absolute;height:3px;border-radius:1.5px;background:#b7791f;pointer-events:auto}
+.ov-primer.rev{background:#975a16}
+.ov-primer-head{position:absolute;width:0;height:0;border-top:4.5px solid transparent;
+  border-bottom:4.5px solid transparent;border-left:6px solid #b7791f;border-right:0}
+.ov-primer-head.rev{border-left:0;border-right:6px solid #975a16}
+.ov-primer-label{position:absolute;font:9px var(--ui);color:#8a5a08;white-space:nowrap}
+/* the arrow at an ORF's start codon, pointing the way it reads */
+.ov-orf-start{position:absolute;width:0;height:0;border-top:5px solid transparent;
+  border-bottom:5px solid transparent;border-left:8px solid transparent;border-right:0}
+.ov-orf-start.rev{border-left:0;border-right:8px solid transparent}
 .ov-sel{position:absolute;background:var(--sel);border-left:1.5px solid var(--sel-line);
   border-right:1.5px solid var(--sel-line)}
 .ov-cut{position:absolute;width:1px;background:#c53030}
@@ -203,3 +217,36 @@ table.t tr:hover td{background:var(--panel2)}
 .v3-bar button:hover{border-color:#6aa6e8;color:#9ecbff}
 .v3-canvas{position:absolute;top:30px;left:0;right:0;bottom:0}
 .hidden{display:none}
+
+/* ---------- right-click menu ---------- */
+.ctxmenu{position:fixed;display:none;z-index:60;min-width:210px;max-height:76vh;overflow-y:auto;
+  background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px;
+  box-shadow:0 10px 30px rgba(10,20,40,.18)}
+.ctxmenu.open{display:block}
+.ctxmenu button{display:flex;width:100%;border:0;background:transparent;padding:5px 9px;
+  border-radius:5px;text-align:left;font-size:12px}
+.ctxmenu button:hover:not(:disabled){background:var(--accent-soft);color:var(--accent)}
+.ctxmenu button:disabled{opacity:.4;cursor:default}
+.ctxmenu button.danger:hover{background:#fdecec;color:var(--err)}
+.ctxmenu .sep{height:1px;background:var(--line);margin:4px 2px}
+.ctxmenu .ctxhead{padding:5px 9px 3px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;
+  color:var(--ink3);font-weight:650}
+.primerbar{opacity:.9}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--ink2);padding:3px 8px}
+.btn.ghost:hover{background:var(--panel2);border-color:var(--line);color:var(--ink)}
+
+/* ---------- folder picker ---------- */
+.fp-path{font:11.5px var(--mono);color:var(--ink2);background:var(--panel2);padding:6px 8px;
+  border-radius:5px;margin-bottom:6px;word-break:break-all}
+.fp-list{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:6px}
+.fp-list .row{cursor:pointer}
+.fp-list .row:hover{background:var(--accent-soft)}
+
+/* ---------- enzyme chips ---------- */
+.tag.off{opacity:.45;text-decoration:line-through}
+.chipx{margin-left:4px;opacity:.6;font-weight:700}
+.chipx:hover{opacity:1;color:var(--err)}
+.renderimg{width:100%;border:1px solid var(--line);border-radius:6px;margin-top:6px;display:block}
+.row .x{opacity:0;color:var(--ink3);padding:0 2px;margin-left:4px}
+.row:hover .x{opacity:1}
+.row .x:hover{color:var(--err)}
