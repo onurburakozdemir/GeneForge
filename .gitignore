@@ -1,0 +1,21 @@
+# Built locally by setup.sh (contains machine-specific absolute paths)
+GeneForge.app/
+icon_1024.png
+
+# Local micromamba fallback installed by setup.sh
+.bin/
+.mamba/
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Scratch
+_to_delete/
+
+# Kept local, not published
+testdata/
+HANDOFF.md

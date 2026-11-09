@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GeneForge</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand">Gene<span>Forge</span></div>
+    <div id="folder" title=""></div>
+    <div id="notices"></div>
+    <div id="conn" class="offline" title="connecting…"></div>
+  </header>
+
+  <div id="body">
+    <aside id="sidebar">
+      <section class="side">
+        <h3>Open <button id="btn-new" class="mini" title="New sequence">+</button></h3>
+        <ul id="open-list" class="list"></ul>
+      </section>
+      <section class="side grow">
+        <h3>Folder</h3>
+        <input id="file-filter" class="filter" placeholder="filter files…">
+        <ul id="file-list" class="list"></ul>
+      </section>
+      <section class="side">
+        <h3>Primers <button id="btn-newprimer" class="mini" title="Add primer">+</button></h3>
+        <ul id="primer-list" class="list"></ul>
+      </section>
+    </aside>
+
+    <main id="main">
+      <div id="toolbar">
+        <input id="seq-name" class="name" spellcheck="false" placeholder="sequence name">
+        <span id="seq-meta" class="meta"></span>
+        <div class="spacer"></div>
+        <div class="seg" id="view-toggle">
+          <button data-view="linear" class="on">Linear</button
+          ><button data-view="circular">Circular</button
+          ><button data-view="split">Both</button>
+        </div>
+        <div class="seg" id="topology-toggle" title="Molecule topology">
+          <button data-topo="linear">—</button><button data-topo="circular">○</button>
+        </div>
+        <label class="chk"><input type="checkbox" id="show-rev" checked> Rev</label>
+        <label class="chk"><input type="checkbox" id="show-aa"> Translate</label>
+        <label class="chk"><input type="checkbox" id="show-orfs"> ORFs</label>
+        <div class="spacer"></div>
+        <button id="btn-annotate" class="btn" disabled>Annotate</button>
+        <div class="dropdown">
+          <button id="btn-copy" class="btn" disabled title="Copy as…">Copy ▾</button>
+          <div id="copy-menu" class="menu"></div>
+        </div>
+        <button id="btn-save" class="btn primary">Save</button>
+      </div>
+
+      <div id="mapwrap"><div id="map-linear"></div><div id="map-circular"></div><div id="viewer3d" class="hidden"></div></div>
+      <div id="splitter"></div>
+      <div id="seqwrap"><div id="seqscroll"><div id="seqinner"></div></div></div>
+      <div id="statusbar"><span id="sel-info">no selection</span><span id="hover-info"></span></div>
+    </main>
+
+    <aside id="right">
+      <nav id="tabs">
+        <button data-tab="features" class="on">Features</button>
+        <button data-tab="enzymes">Enzymes</button>
+        <button data-tab="primers">Primers</button>
+        <button data-tab="tools">Tools</button>
+        <button data-tab="3d">3D</button>
+      </nav>
+      <div id="panel"></div>
+    </aside>
+  </div>
+</div>
+
+<div id="modal-back" class="hidden"><div id="modal"></div></div>
+<div id="toast"></div>
+
+<script src="/static/3Dmol-min.js"></script>
+<script src="/static/maps.js"></script>
+<script src="/static/app.js"></script>
+<script src="/static/panels.js"></script>
+</body>
+</html>

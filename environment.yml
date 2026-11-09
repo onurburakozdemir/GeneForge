@@ -1,0 +1,22 @@
+# GeneForge environment.
+#   mamba env create -f environment.yml     (or run ./setup.sh, which does more)
+name: geneforge
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pymol-open-source      # 3D viewing and ray-traced publication renders
+  - pip:
+      - biopython          # parsing, restriction (REBASE), translation
+      - primer3-py         # primer design and thermodynamics
+      - ViennaRNA          # RNA/DNA secondary structure
+      - pyfamsa            # multiple sequence alignment (FAMSA)
+      - biotite            # structure parsing and analysis
+      - dnachisel          # codon optimisation, site removal
+      - pydna              # Gibson / Golden Gate simulation
+      - fastapi
+      - uvicorn[standard]
+      - websockets
+      - watchdog
+      - pywebview          # native macOS window
