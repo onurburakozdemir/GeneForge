@@ -469,6 +469,40 @@ def create_app(store: Store) -> FastAPI:
             raise HTTPException(404, "no such image")
         return FileResponse(path)
 
+    @app.post("/api/reveal")
+    def reveal(body: dict = Body(...)):
+        """Show a file we produced in the Finder."""
+        import platform
+        import subprocess
+        path = body.get("path") or ""
+        if not os.path.isabs(path):
+            path = os.path.join(store.folder, path)
+        if not os.path.exists(path):
+            raise HTTPException(404, "no such file")
+        if platform.system() != "Darwin":
+            raise HTTPException(400, "only on macOS")
+        subprocess.Popen(["open", "-R", path])
+        return {"ok": True, "path": path}
+
+    @app.post("/api/copy_file")
+    def copy_file(body: dict = Body(...)):
+        """Save a copy of something GeneForge made, under a name the user picks."""
+        import shutil
+        src = body.get("from") or ""
+        if not os.path.isabs(src):
+            src = os.path.join(store.folder, src)
+        if not os.path.exists(src):
+            raise HTTPException(404, "no such file")
+        name = os.path.basename(body.get("name") or os.path.basename(src))
+        if not name:
+            raise HTTPException(400, "name required")
+        dest = os.path.join(store.folder, name)
+        if os.path.abspath(dest) == os.path.abspath(src):
+            return {"path": dest, "note": "already there"}
+        shutil.copy2(src, dest)
+        store.broadcast({"type": "files", "files": seqio.list_folder(store.folder)})
+        return {"path": dest}
+
     @app.post("/api/esmfold/install")
     def esmfold_install(body: dict = Body(default={})):
         return tools.start_esmfold_install(

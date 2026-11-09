@@ -128,8 +128,18 @@ def start_esmfold_install(on_event=None) -> dict[str, Any]:
             with _INSTALL_LOCK:
                 _INSTALL["state"] = "failed"
             return
+        # A package installed after start-up is invisible until the import
+        # machinery re-reads site-packages, so refresh it and use it now
+        # rather than making the user restart the app.
+        import importlib
+        importlib.invalidate_caches()
+        try:
+            import site
+            importlib.reload(site)
+        except Exception:
+            pass
         ok = code == 0 and _have("torch") and _have("transformers")
-        say("ESMFold installed — reload GeneForge to use it." if ok
+        say("ESMFold installed and ready to use." if ok
             else f"pip exited with code {code}")
         with _INSTALL_LOCK:
             _INSTALL["state"] = "done" if ok else "failed"

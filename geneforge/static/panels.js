@@ -291,28 +291,6 @@
     };
   }
 
-  /** Say why ESMFold is unavailable, and offer to install it. */
-  function esmfoldNote(cap) {
-    if (cap.esmfold) return '';
-    const why = cap.esmfold_why || {};
-    const st = (cap.esmfold_install || {}).state;
-    if (st === 'running') {
-      return `<div class="hint" style="color:#c05621">Installing ESMFold… this takes a
-        while. Progress appears at the top of the window; you can keep working.</div>`;
-    }
-    if (st === 'done') {
-      return `<div class="hint" style="color:#2f855a">ESMFold installed — reload
-        GeneForge (⌘R) to use it.</div>`;
-    }
-    const reason = why.reason || 'Not installed.';
-    return `<div class="hint" style="color:#c05621">${esc(reason)}</div>
-      ${st === 'failed' ? '<div class="hint" style="color:#c53030">The last install attempt failed. The log is in the notices at the top.</div>' : ''}
-      <button class="btn" data-a="esminstall" style="width:100%;margin:2px">
-        Install ESMFold now (~5 GB)</button>
-      <div class="hint">Or from a terminal, in the GeneForge folder:
-        <span class="mono">${esc(why.command || './setup.sh --with-esmfold')}</span></div>`;
-  }
-
   function toolsPanel(p, s) {
     const r = sel(), hasSel = r && r[1] > r[0], cap = H.CAPS || {};
     const warn = (ok, what) => ok ? '' : `<div class="hint" style="color:#c05621">${what} not installed</div>`;
@@ -339,9 +317,9 @@
       <button class="btn" data-a="mutate" style="width:100%;margin:2px">Make protein variant…</button>
 
       <div class="ptitle">Structure prediction</div>
-      <button class="btn" data-a="af3" style="width:100%;margin:2px">Build AlphaFold 3 job…</button>
-      <button class="btn" data-a="esm" style="width:100%;margin:2px" ${cap.esmfold ? '' : 'disabled'}>Fold ${hasSel ? 'selection' : 'CDS'} with ESMFold</button>
-      ${esmfoldNote(cap)}
+      <div class="hint">Prediction and 3D live in the <b>Structure &amp; protein</b> tab,
+        next to DNA at the top of this pane.</div>
+      <button class="btn" data-a="go3d" style="width:100%;margin:2px">Open Structure &amp; protein</button>
       ${cap.specs && cap.specs.ram_gb ? `<div class="hint">This machine: ${cap.specs.ram_gb} GB RAM · ${cap.specs.cpus} cores${cap.specs.chip ? ' · ' + esc(cap.specs.chip) : ''}</div>` : ''}
 
       <div class="ptitle">Assembly</div>
@@ -399,47 +377,7 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
     p.querySelector('[data-a=af3]').onclick = () => GFPanels.af3Dialog();
     p.querySelector('[data-a=gg]').onclick = () => GFPanels.assemblyDialog('goldengate');
     p.querySelector('[data-a=gib]').onclick = () => GFPanels.assemblyDialog('gibson');
-    const inst = p.querySelector('[data-a=esminstall]');
-    if (inst) inst.onclick = () => {
-      const why = (H.CAPS || {}).esmfold_why || {};
-      const extra = why.enough_ram === false
-        ? '\n\nNote: this machine has less RAM than ESMFold needs, so it will install but refuse to run.'
-        : '';
-      if (!confirm('Download and install ESMFold?\n\nThis fetches about 5 GB (PyTorch and '
-        + 'transformers), and the model itself downloads on first use.' + extra)) return;
-      inst.disabled = true; inst.textContent = 'installing…';
-      GF.post('/api/esmfold/install', {})
-        .then(() => {
-          GF.toast('ESMFold install started — watch the notices at the top', 5000);
-          pollInstall();
-        })
-        .catch(e => { inst.disabled = false; inst.textContent = 'Install ESMFold now (~5 GB)'; GF.toast(e.message, 6000); });
-    };
-    const esm = p.querySelector('[data-a=esm]');
-    if (esm && !esm.disabled) esm.onclick = () => {
-      esm.disabled = true; esm.textContent = 'folding… may take minutes';
-      const body = { id: s.id, save: true, name: (s.name || 'seq').replace(/\W+/g, '_') + '_esmfold' };
-      if (hasSel) { body.start = r[0]; body.end = r[1]; }
-      GF.post('/api/esmfold', body).then(res => {
-        esm.disabled = false; esm.textContent = 'Fold with ESMFold';
-        GF.toast(`ESMFold done — mean pLDDT ${res.mean_plddt}`, 5000);
-        if (res.path) { GF.ui.tab = '3d'; GF.syncTabs(); H.render(); GFPanels.viewStructure(res.path); }
-      }).catch(e => { esm.disabled = false; esm.textContent = 'Fold with ESMFold'; GF.toast(e.message, 7000); });
-    };
-  }
-
-  /** Watch an install until it stops, refreshing what the panel reports. */
-  let pollTimer = null;
-  function pollInstall() {
-    clearTimeout(pollTimer);
-    pollTimer = setTimeout(() => {
-      GF.api('/api/capabilities').then(c => {
-        H.setCaps(c);
-        if (GF.ui.tab === 'tools') H.render();
-        const st = (c.esmfold_install || {}).state;
-        if (st === 'running') pollInstall();
-      }).catch(() => { });
-    }, 4000);
+    p.querySelector('[data-a=go3d]').onclick = () => GF.setMainTab('structure');
   }
 
   GFPanels.primersPanel = primersPanel;
@@ -680,6 +618,39 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
       }, 'Create');
   }
 
+  /** Turn whatever is selected into a primer, without the design step. */
+  function primerFromSelection(strand) {
+    const s = act(), r = sel();
+    if (!s || !r || r[1] <= r[0]) return GF.toast('select a region first');
+    const raw = s.seq.slice(r[0], r[1]);
+    const seq = strand === -1 ? GF.rc(raw) : raw;
+    const base = (s.name || 'primer').replace(/\W+/g, '_');
+    const name = `${base}_${strand === -1 ? 'R' : 'F'}${r[0] + 1}`;
+    if (seq.length > 60) {
+      GF.toast(`${seq.length} nt is long for a primer, but go ahead if you mean it`, 4000);
+    }
+    GF.post('/api/primer/stats', { seq }).then(st => {
+      modal(strand === -1 ? 'New reverse primer' : 'New primer', `
+        <div class="field"><label>Name</label><input name="nm" value="${esc(name)}"></div>
+        <div class="field"><label>Sequence 5'→3'${strand === -1 ? ' (reverse complement of the selection)' : ''}</label>
+          <textarea name="sq" rows="3" class="mono">${esc(seq)}</textarea></div>
+        <div class="hint">${seq.length} nt · Tm ${st.tm} °C · ${st.gc}% GC
+          · hairpin ${st.hairpin_tm} °C · self-dimer ${st.homodimer_tm} °C
+          ${st.gc_clamp ? '· GC clamp' : '· no GC clamp'}</div>
+        <label class="chk"><input type="checkbox" name="att" checked>
+          annotate its binding site on ${esc(s.name)}</label>`,
+        box => {
+          const sq = (val(box, 'sq') || '').replace(/[^A-Za-z]/g, '');
+          if (!sq) { GF.toast('enter a sequence'); return false; }
+          const body = { name: val(box, 'nm') || name, seq: sq };
+          if (box.querySelector('[name=att]').checked) body.attach_to = s.id;
+          GF.post('/api/primers', body)
+            .then(pr => GF.toast(`${pr.name}: Tm ${pr.tm} °C, ${pr.gc}% GC`, 4000))
+            .catch(e => GF.toast(e.message, 5000));
+        }, 'Save primer');
+    }).catch(e => GF.toast(e.message, 5000));
+  }
+
   function newPrimerDialog() {
     modal('Add primer', `
       <div class="field"><label>Name</label><input name="nm" value="primer"></div>
@@ -754,67 +725,117 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
     load(GF.state.folder);
   }
 
+  /* ------------------------------------------------- structure & protein
+
+     The Structure tab owns the whole main pane, so the viewer is a first
+     class view beside the sequence rather than an overlay on the map. This
+     panel is its side bar: what to look at, and what to do with it. */
+
   function structurePanel(p) {
     const cap = H.CAPS || {};
-    p.innerHTML = `<div class="ptitle">Structures in folder</div><div id="stlist"><div class="empty">scanning…</div></div>
-      <div class="ptitle">Render</div>
+    const cur = GF.ui.structPath;
+    p.innerHTML = `
+      ${GF.ui.mainTab !== 'structure'
+        ? '<button class="btn" data-a="open3d" style="width:100%;margin:2px 2px 8px">Open the Structure tab</button>' : ''}
+      <div class="ptitle">Structures in folder</div>
+      <div id="stlist"><div class="empty">scanning…</div></div>
+      <div class="ptitle">Predict</div>
+      <button class="btn" data-a="af3" style="width:100%;margin:2px">Build AlphaFold 3 job…</button>
+      <button class="btn" data-a="esm" style="width:100%;margin:2px" ${cap.esmfold ? '' : 'disabled'}>
+        Fold selection with ESMFold</button>
+      ${cap.esmfold ? '' : `<div class="hint">ESMFold is not installed.
+        <a href="#" data-a="addons">Add it from Add-ons</a>.</div>`}
+      <div class="ptitle">Ray-traced image</div>
       <div class="field"><label>Style</label><select name="style">
         <option value="cartoon">cartoon, rainbow</option><option value="surface">surface</option>
-        <option value="sticks">sticks</option><option value="cartoon_bfactor">cartoon by B-factor / pLDDT</option></select></div>
-      <button class="btn" data-a="pymol" style="width:100%;margin:2px" ${cap.pymol ? '' : 'disabled'}>PyMOL ray-traced render</button>
+        <option value="sticks">sticks</option><option value="cartoon_bfactor">cartoon by B-factor / pLDDT</option>
+      </select></div>
+      <button class="btn" data-a="pymol" style="width:100%;margin:2px" ${cap.pymol && cur ? '' : 'disabled'}>
+        ${cur ? 'Render with PyMOL' : 'Pick a structure first'}</button>
       ${cap.pymol ? '' : '<div class="hint" style="color:#c05621">PyMOL not installed</div>'}
       <div id="renderout"></div>`;
-    let current = null;
-    fetch('/api/structures').then(r => r.json()).then(d => {
+
+    const on = (sel, fn) => { const e = p.querySelector(sel); if (e) e.onclick = ev => { ev.preventDefault(); fn(ev); }; };
+    on('[data-a=open3d]', () => GF.setMainTab('structure'));
+    on('[data-a=af3]', () => af3Dialog());
+    on('[data-a=addons]', () => addonsDialog());
+    on('[data-a=pymol]', () => renderStructure(p.querySelector('[name=style]').value));
+    const esm = p.querySelector('[data-a=esm]');
+    if (esm && !esm.disabled) esm.onclick = () => esmfoldRun();
+
+    refreshStructures().then(() => {
       const list = p.querySelector('#stlist');
-      if (!d.structures.length) { list.innerHTML = '<div class="empty">no .pdb / .cif here</div>'; return; }
+      if (!list) return;
+      const all = GF.ui.structures;
+      if (!all.length) { list.innerHTML = '<div class="empty">no .pdb / .cif here</div>'; return; }
       list.innerHTML = '';
-      d.structures.forEach(st => {
+      all.forEach(st => {
         const row = document.createElement('div');
-        row.className = 'row';
+        row.className = 'row' + (st.path === GF.ui.structPath ? ' active' : '');
         row.innerHTML = `<span class="nm">${esc(st.name)}</span><span class="co">${(st.size / 1024).toFixed(0)}k</span>`;
-        row.onclick = () => {
-          current = st.path;
-          p.querySelectorAll('#stlist .row').forEach(x => x.classList.remove('active'));
-          row.classList.add('active');
-          viewStructure(st.path);
-        };
+        row.onclick = () => { showStructure(st.path); GF.setMainTab('structure'); };
         list.appendChild(row);
       });
-    }).catch(() => { });
-    p.querySelector('[data-a=pymol]').onclick = e => {
-      if (!current) return GF.toast('pick a structure first');
-      const b = e.target; b.disabled = true; b.textContent = 'rendering…';
-      GF.post('/api/render', { path: current, style: p.querySelector('[name=style]').value }).then(res => {
-        b.disabled = false; b.textContent = 'PyMOL ray-traced render';
-        /* show the picture, not just where it landed */
-        p.querySelector('#renderout').innerHTML =
-          `<img class="renderimg" src="/api/image?path=${encodeURIComponent(res.png)}&t=${Date.now()}">
-           <div class="hint">${(res.size / 1024).toFixed(0)} kB · ${res.width}×${res.height}
-             · saved as <span class="mono">${esc(res.png.split('/').pop())}</span></div>`;
-      }).catch(err => { b.disabled = false; b.textContent = 'PyMOL ray-traced render'; GF.toast(err.message, 7000); });
-    };
+    });
   }
 
-  function viewStructure(path) {
+  /** Reload the folder's structure list and keep the picker in step. */
+  function refreshStructures() {
+    return GF.api('/api/structures').then(d => {
+      GF.ui.structures = d.structures || [];
+      const pick = $('#struct-pick');
+      if (pick) {
+        pick.innerHTML = GF.ui.structures.length
+          ? GF.ui.structures.map(s =>
+              `<option value="${esc(s.path)}" ${s.path === GF.ui.structPath ? 'selected' : ''}>${esc(s.name)}</option>`).join('')
+          : '<option value="">no .pdb or .cif in this folder</option>';
+      }
+      /* show something straight away rather than an empty black pane */
+      if (!GF.ui.structPath && GF.ui.structures.length && GF.ui.mainTab === 'structure') {
+        showStructure(GF.ui.structures[0].path);
+      }
+      return GF.ui.structures;
+    }).catch(() => []);
+  }
+
+  function setStructInfo(text) {
+    const el = $('#struct-info');
+    if (el) el.textContent = text;
+  }
+
+  function showStructure(path) {
+    if (!path) return;
+    GF.ui.structPath = path;
+    const pick = $('#struct-pick');
+    if (pick && pick.value !== path) pick.value = path;
     const host = $('#viewer3d');
     host.classList.remove('hidden');
-    host.innerHTML = `<div class="v3-bar"><b>${esc(path.split('/').pop())}</b>
-        <button data-s="cartoon">cartoon</button><button data-s="stick">sticks</button>
-        <button data-s="sphere">spheres</button><button data-s="surface">surface</button>
-        <button data-s="plddt">pLDDT</button><span style="flex:1"></span><button data-s="close">close</button>
-      </div><div class="v3-canvas" id="v3canvas"></div>`;
+    host.innerHTML = '<div class="v3-canvas" id="v3canvas"></div>';
     const canvas = host.querySelector('#v3canvas');
+    setStructInfo('loading ' + path.split('/').pop() + '…');
     fetch('/api/structure?path=' + encodeURIComponent(path)).then(r => r.text()).then(text => {
-      if (typeof $3Dmol === 'undefined') { canvas.innerHTML = '<div class="empty" style="color:#8a94a0">3Dmol.js not vendored</div>'; return; }
+      if (typeof $3Dmol === 'undefined') {
+        canvas.innerHTML = '<div class="v3-empty">3Dmol.js not vendored</div>';
+        return;
+      }
       viewer = $3Dmol.createViewer(canvas, { backgroundColor: '#0f1216' });
+      H.viewer = viewer;
       viewer.addModel(text, /\.cif$|\.mmcif$/i.test(path) ? 'cif' : 'pdb');
-      applyStyle('cartoon'); viewer.zoomTo(); viewer.render();
-    }).catch(e => canvas.innerHTML = `<div class="empty" style="color:#8a94a0">${esc(e.message)}</div>`);
-    host.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
-      if (b.dataset.s === 'close') { host.classList.add('hidden'); viewer = null; return; }
-      applyStyle(b.dataset.s); if (viewer) viewer.render();
+      applyStyle(GF.ui.style3d);
+      viewer.zoomTo(); viewer.render();
+      const atoms = viewer.selectedAtoms({}).length;
+      const chains = new Set(viewer.selectedAtoms({}).map(a => a.chain)).size;
+      setStructInfo(`${path.split('/').pop()} · ${atoms.toLocaleString()} atoms · ${chains} chain${chains === 1 ? '' : 's'}`);
+      if (GF.ui.tab === '3d') render();
+    }).catch(e => {
+      canvas.innerHTML = `<div class="v3-empty">${esc(e.message)}</div>`;
+      setStructInfo('could not load ' + path.split('/').pop());
     });
+  }
+
+  function resizeViewer() {
+    if (!viewer) return;
+    try { viewer.resize(); viewer.render(); } catch (e) { }
   }
 
   function applyStyle(style) {
@@ -831,8 +852,173 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
       viewer.setStyle({}, { cartoon: { colorfunc: a =>
         a.b > 90 ? '#0053d6' : a.b > 70 ? '#65cbf3' : a.b > 50 ? '#ffdb13' : '#ff7d45' } });
     }
+    viewer.render();
+  }
+
+  /* ----------------------------------------------------------- rendering */
+
+  function renderStructure(style) {
+    const path = GF.ui.structPath;
+    if (!path) return GF.toast('pick a structure first');
+    const chosen = style || (document.querySelector('#panel [name=style]') || {}).value || 'cartoon';
+    const btn = $('#btn-render');
+    if (btn) { btn.disabled = true; btn.textContent = 'rendering…'; }
+    GF.toast('rendering with PyMOL…', 4000);
+    return GF.post('/api/render', { path, style: chosen })
+      .then(res => {
+        if (btn) { btn.disabled = false; btn.textContent = 'Render'; }
+        renderResultDialog(res);
+      })
+      .catch(e => {
+        if (btn) { btn.disabled = false; btn.textContent = 'Render'; }
+        GF.toast(e.message, 7000);
+      });
+  }
+
+  /** Show the finished image with the obvious ways to keep it. */
+  function renderResultDialog(res) {
+    const url = '/api/image?path=' + encodeURIComponent(res.png) + '&t=' + Date.now();
+    const file = res.png.split('/').pop();
+    const m = modal('Render ready', `
+      <img class="renderimg" src="${url}">
+      <div class="hint">${(res.size / 1024).toFixed(0)} kB · ${res.width}×${res.height}</div>
+      <div class="hint">Saved next to the structure as
+        <span class="mono">${esc(file)}</span></div>
+      <div class="frow" style="margin-top:8px">
+        <a class="btn" href="${url}" download="${esc(file)}" data-x="dl">Download…</a>
+        <button class="btn" data-x="reveal">Show in Finder</button>
+        <button class="btn" data-x="saveas">Save a copy as…</button>
+      </div>`);
+    m.box.querySelector('[data-x=reveal]').onclick = () =>
+      GF.post('/api/reveal', { path: res.png })
+        .then(() => GF.toast('shown in Finder'))
+        .catch(e => GF.toast(e.message, 5000));
+    m.box.querySelector('[data-x=saveas]').onclick = () => {
+      m.close();
+      modal('Save a copy', `
+        <div class="field"><label>File name</label><input name="fn" value="${esc(file)}"></div>
+        <div class="hint">Saved into the working folder:<br>
+          <span class="mono">${esc(GF.state.folder)}</span></div>`,
+        box2 => GF.post('/api/copy_file', { from: res.png, name: val(box2, 'fn') })
+          .then(r => GF.toast('saved ' + r.path.split('/').pop(), 4000))
+          .catch(e => GF.toast(e.message, 5000)), 'Save');
+    };
+    /* also drop it in the side panel, so it is still there after closing */
+    const out = document.querySelector('#renderout');
+    if (out) {
+      out.innerHTML = `<img class="renderimg" src="${url}">
+        <div class="hint">${esc(file)} · <a href="${url}" download="${esc(file)}">download</a></div>`;
+    }
+  }
+
+  /* ------------------------------------------------------------- predict */
+
+  function predictMenu(ev) {
+    const cap = H.CAPS || {};
+    const s = act(), r = sel();
+    const hasSel = !!(s && r && r[1] > r[0]);
+    GF.showCtx(ev, [
+      { header: hasSel ? `selection ${(r[0] + 1).toLocaleString()}–${r[1].toLocaleString()}` : 'no selection' },
+      { label: 'Build AlphaFold 3 job…', run: () => af3Dialog() },
+      cap.esmfold
+        ? { label: hasSel ? 'Fold selection with ESMFold' : 'Fold the CDS with ESMFold', run: () => esmfoldRun() }
+        : { label: 'ESMFold — install from Add-ons…', run: () => addonsDialog() },
+    ]);
+  }
+
+  function esmfoldRun() {
+    const s = act();
+    if (!s) return GF.toast('open a sequence first');
+    const r = sel(), hasSel = r && r[1] > r[0];
+    const body = { id: s.id, save: true, name: (s.name || 'seq').replace(/\W+/g, '_') + '_esmfold' };
+    if (hasSel) { body.start = r[0]; body.end = r[1]; }
+    GF.toast('folding with ESMFold — this takes minutes on CPU', 6000);
+    setStructInfo('folding with ESMFold…');
+    GF.post('/api/esmfold', body).then(res => {
+      GF.toast(`ESMFold done — mean pLDDT ${res.mean_plddt}`, 6000);
+      if (res.path) {
+        GF.setMainTab('structure');
+        refreshStructures().then(() => {
+          showStructure(res.path);
+          GF.ui.style3d = 'plddt';
+          document.querySelectorAll('#style3d button').forEach(b =>
+            b.classList.toggle('on', b.dataset.s === 'plddt'));
+          applyStyle('plddt');
+        });
+      }
+    }).catch(e => { setStructInfo('ESMFold failed'); GF.toast(e.message, 8000); });
+  }
+
+  /* -------------------------------------------------------------- add-ons */
+
+  const ADDONS = [{
+    key: 'esmfold',
+    name: 'ESMFold',
+    blurb: 'Predict a protein structure on this Mac, no upload. Single chain only — ' +
+           'no DNA, no multimers, no metals. About 5 GB to install, plus a 2.7 GB ' +
+           'model the first time you fold.',
+  }];
+
+  function addonsDialog() {
+    const m = modal('Add-ons', '<div id="addonlist"><div class="empty">checking…</div></div>', null);
+    const draw = cap => {
+      const host = m.box.querySelector('#addonlist');
+      if (!host) return;
+      host.innerHTML = ADDONS.map(a => {
+        const ready = !!cap[a.key];
+        const st = (cap[a.key + '_install'] || {}).state;
+        const why = cap[a.key + '_why'] || {};
+        const log = ((cap[a.key + '_install'] || {}).log || []).slice(-2).join('<br>');
+        let action;
+        if (ready) action = '<span class="tag ok">installed</span>';
+        else if (st === 'running') action = `<span class="tag">installing…</span>`;
+        else action = `<button class="btn primary" data-install="${a.key}">Install</button>`;
+        return `<div style="border:1px solid var(--line);border-radius:7px;padding:9px;margin:6px 0">
+          <div style="display:flex;align-items:center;gap:8px">
+            <b style="flex:1">${esc(a.name)}</b>${action}</div>
+          <div class="hint" style="margin-top:4px">${esc(a.blurb)}</div>
+          ${!ready && why.enough_ram === false
+            ? `<div class="hint" style="color:#c05621">This Mac reports
+                ${cap.specs && cap.specs.ram_gb} GB of RAM and ESMFold needs about 16 GB,
+                so it would install but refuse to run. The AlphaFold 3 export has no such
+                limit.</div>` : ''}
+          ${st === 'running' && log ? `<div class="hint mono" style="margin-top:4px">${log}</div>` : ''}
+          ${st === 'failed' ? '<div class="hint" style="color:#c53030">The last attempt failed; the notices at the top have the detail.</div>' : ''}
+          ${ready ? '' : `<div class="hint">Or in a terminal, in the GeneForge folder:
+              <span class="mono">${esc(why.command || './setup.sh --with-esmfold')}</span></div>`}
+        </div>`;
+      }).join('');
+      host.querySelectorAll('[data-install]').forEach(b => b.onclick = () => {
+        const a = ADDONS.find(x => x.key === b.dataset.install);
+        if (!confirm(`Install ${a.name}?\n\n${a.blurb}`)) return;
+        b.disabled = true; b.textContent = 'starting…';
+        GF.post('/api/esmfold/install', {})
+          .then(() => { GF.toast('install started — you can keep working', 5000); watch(); })
+          .catch(e => { b.disabled = false; b.textContent = 'Install'; GF.toast(e.message, 6000); });
+      });
+    };
+    let timer = null;
+    const watch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        GF.api('/api/capabilities').then(c => {
+          H.setCaps(c);
+          if (document.body.contains(m.box) && m.box.querySelector('#addonlist')) draw(c);
+          if (GF.ui.tab === '3d' || GF.ui.tab === 'tools') render();
+          if ((c.esmfold_install || {}).state === 'running') watch();
+          else if (c.esmfold) GF.toast('ESMFold is ready to use', 5000);
+        }).catch(() => { });
+      }, 4000);
+    };
+    GF.api('/api/capabilities').then(c => {
+      H.setCaps(c);
+      draw(c);
+      if ((c.esmfold_install || {}).state === 'running') watch();
+    });
   }
 
   Object.assign(GFPanels, { render, alignDialog, mutateDialog, af3Dialog, assemblyDialog,
-    newSequenceDialog, newPrimerDialog, saveAsDialog, folderDialog, viewStructure, structurePanel });
+    newSequenceDialog, newPrimerDialog, primerFromSelection, saveAsDialog, folderDialog, structurePanel,
+    showStructure, refreshStructures, applyStyle, resizeViewer, renderStructure,
+    predictMenu, esmfoldRun, addonsDialog });
 })();

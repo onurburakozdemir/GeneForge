@@ -10,6 +10,7 @@ const GF = {
     primerSites: [],
     // Translations the user asked for, each over one region only.
     translations: [],
+    mainTab: 'dna', structPath: null, style3d: 'cartoon', structures: [],
     charW: 7.7, lineH: 0, perLine: 60, metrics: null,
   },
   ws: null,
@@ -517,31 +518,62 @@ function renderStatus() {
 
 function hideCtx() { $('#ctx').classList.remove('open'); }
 
-/** Build and show the right-click menu at the pointer. */
+/** Build and show the right-click menu at the pointer.
+
+    An item with `sub` opens a flyout, which keeps the top level to a handful
+    of lines instead of a column the height of the window. */
 function showCtx(ev, items) {
   const m = $('#ctx');
   m.innerHTML = '';
+  m.appendChild(buildCtxList(items));
+  m.classList.add('open');
+  place(m, ev.clientX, ev.clientY);
+}
+
+function buildCtxList(items) {
+  const ul = document.createElement('div');
+  ul.className = 'ctxlist';
   items.forEach(it => {
-    if (!it) { m.appendChild(Object.assign(document.createElement('div'), { className: 'sep' })); return; }
+    if (!it) { ul.appendChild(Object.assign(document.createElement('div'), { className: 'sep' })); return; }
     if (it.header) {
       const h = document.createElement('div');
       h.className = 'ctxhead'; h.textContent = it.header;
-      m.appendChild(h); return;
+      ul.appendChild(h); return;
+    }
+    if (it.sub) {
+      const wrap = document.createElement('div');
+      wrap.className = 'ctxsub';
+      const b = document.createElement('button');
+      b.innerHTML = `<span>${esc(it.label)}</span><span class="arrow">›</span>`;
+      wrap.appendChild(b);
+      const panel = buildCtxList(it.sub);
+      panel.classList.add('ctxflyout');
+      wrap.appendChild(panel);
+      /* flip the flyout to the left when there is no room on the right */
+      wrap.onmouseenter = () => {
+        panel.style.left = ''; panel.style.right = '';
+        const r = panel.getBoundingClientRect();
+        if (r.right > window.innerWidth - 6) { panel.style.left = 'auto'; panel.style.right = '100%'; }
+        const over = r.bottom - (window.innerHeight - 6);
+        panel.style.top = over > 0 ? (-over) + 'px' : '0px';
+      };
+      ul.appendChild(wrap); return;
     }
     const b = document.createElement('button');
     b.textContent = it.label;
     if (it.danger) b.className = 'danger';
     if (it.disabled) b.disabled = true;
     b.onclick = e => { e.stopPropagation(); hideCtx(); it.run && it.run(); };
-    m.appendChild(b);
+    ul.appendChild(b);
   });
-  m.classList.add('open');
-  /* keep it on screen */
+  return ul;
+}
+
+function place(m, cx, cy) {
+  m.style.left = '0px'; m.style.top = '0px';
   const r = m.getBoundingClientRect();
-  const x = Math.min(ev.clientX, window.innerWidth - r.width - 8);
-  const y = Math.min(ev.clientY, window.innerHeight - r.height - 8);
-  m.style.left = Math.max(4, x) + 'px';
-  m.style.top = Math.max(4, y) + 'px';
+  m.style.left = Math.max(4, Math.min(cx, window.innerWidth - r.width - 8)) + 'px';
+  m.style.top = Math.max(4, Math.min(cy, window.innerHeight - r.height - 8)) + 'px';
 }
 
 function copySelection(mode, frame) {
@@ -593,38 +625,59 @@ function sequenceCtx(ev, fromSeqView) {
     : 'whole sequence';
 
   const items = [{ header: where }];
+
+  items.push({
+    label: 'Copy', sub: [
+      { label: 'DNA', run: () => copySelection('dna') },
+      { label: 'DNA, reverse complement', run: () => copySelection('dna_revcomp') },
+      { label: 'DNA, complement', run: () => copySelection('dna_complement') },
+      { label: 'DNA, reversed', run: () => copySelection('dna_rev') },
+      null,
+      { label: 'RNA', run: () => copySelection('rna') },
+      { label: 'RNA, reverse complement', run: () => copySelection('rna_revcomp') },
+      null,
+      { label: 'Protein (frame 1)', run: () => copySelection('protein', 0) },
+      { label: 'Protein (frame 2)', run: () => copySelection('protein', 1) },
+      { label: 'Protein (frame 3)', run: () => copySelection('protein', 2) },
+      { label: 'Protein, reverse strand', run: () => copySelection('protein_revcomp', 0) },
+      null,
+      { label: 'FASTA', run: () => copySelection('fasta') },
+      { label: 'GenBank record', run: () => copySelection('genbank') },
+    ]
+  });
+
   if (hasSel) {
-    items.push(
-      { label: 'Translate this region', run: () => translateSelection(1) },
-      { label: 'Translate, reverse strand', run: () => translateSelection(-1) },
-      { label: 'Annotate this region…', run: () => GFPanels.annotateDialog() },
-      { label: 'Design primers here', run: () => { GF.ui.tab = 'primers'; syncTabs(); renderPanel(); } },
-      null);
+    items.push({
+      label: 'Translate', sub: [
+        { label: 'This region, forward', run: () => translateSelection(1) },
+        { label: 'This region, reverse strand', run: () => translateSelection(-1) },
+        ...(GF.ui.translations.length
+          ? [null, { label: 'Clear translation rows', run: () => { GF.ui.translations = []; renderSeqView(); } }]
+          : []),
+      ]
+    });
+    items.push({
+      label: 'Primer', sub: [
+        { label: 'Make primer from selection', run: () => GFPanels.primerFromSelection(1) },
+        { label: 'Make reverse primer from selection', run: () => GFPanels.primerFromSelection(-1) },
+        null,
+        { label: 'Design a pair with primer3…', run: () => { GF.ui.tab = 'primers'; syncTabs(); renderPanel(); } },
+      ]
+    });
+    items.push({ label: 'Annotate this region…', run: () => GFPanels.annotateDialog() });
+  } else if (GF.ui.translations.length) {
+    items.push({ label: 'Clear translation rows', run: () => { GF.ui.translations = []; renderSeqView(); } });
   }
-  items.push(
-    { header: 'Copy' },
-    { label: 'DNA', run: () => copySelection('dna') },
-    { label: 'DNA, reverse complement', run: () => copySelection('dna_revcomp') },
-    { label: 'DNA, complement', run: () => copySelection('dna_complement') },
-    { label: 'DNA, reversed', run: () => copySelection('dna_rev') },
-    { label: 'RNA', run: () => copySelection('rna') },
-    { label: 'RNA, reverse complement', run: () => copySelection('rna_revcomp') },
-    { label: 'Protein (frame 1)', run: () => copySelection('protein', 0) },
-    { label: 'Protein (frame 2)', run: () => copySelection('protein', 1) },
-    { label: 'Protein (frame 3)', run: () => copySelection('protein', 2) },
-    { label: 'Protein, reverse strand', run: () => copySelection('protein_revcomp', 0) },
-    null,
-    { label: 'FASTA', run: () => copySelection('fasta') },
-    { label: 'GenBank record', run: () => copySelection('genbank') });
 
   if (feat) {
-    items.push(null, { header: `${feat.label} (${feat.type})` },
-      { label: 'Select this annotation', run: () => selectFeature(feat) },
-      { label: 'Edit annotation…', run: () => GFPanels.editFeature(s, feat) },
-      { label: 'Delete annotation', danger: true, run: () => deleteFeature(s, feat) });
-  }
-  if (GF.ui.translations.length) {
-    items.push(null, { label: 'Clear translation rows', run: () => { GF.ui.translations = []; renderSeqView(); } });
+    items.push(null, {
+      label: `Annotation: ${feat.label}`, sub: [
+        { header: feat.type },
+        { label: 'Select', run: () => selectFeature(feat) },
+        { label: 'Edit…', run: () => GFPanels.editFeature(s, feat) },
+        { label: 'Delete annotation', danger: true, run: () => deleteFeature(s, feat) },
+      ]
+    });
   }
   showCtx(ev, items);
 }
@@ -636,10 +689,21 @@ function deleteFeature(s, f) {
     .catch(e => toast(e.message, 4000));
 }
 
-/* ------------------------------------------------------------ folder picker */
+/* --------------------------------------------------- DNA / Structure tabs */
 
-function folderDialog() {
-  GFPanels.folderDialog();
+function setMainTab(tab) {
+  GF.ui.mainTab = tab;
+  $$('#maintabs button').forEach(b => b.classList.toggle('on', b.dataset.main === tab));
+  $('#dnaview').classList.toggle('hidden', tab !== 'dna');
+  $('#structview').classList.toggle('hidden', tab !== 'structure');
+  if (tab === 'structure') {
+    GF.ui.tab = '3d'; syncTabs(); renderPanel();
+    GFPanels.refreshStructures();
+    GFPanels.resizeViewer();
+  } else {
+    /* the sequence view was hidden, so its widths need measuring again */
+    measure(); renderMaps(); renderSeqView();
+  }
 }
 
 /* ------------------------------------------------------------------ wiring */
@@ -711,6 +775,16 @@ function wire() {
   $('#btn-newprimer').onclick = () => GFPanels.newPrimerDialog();
   $('#btn-annotate').onclick = () => GFPanels.annotateDialog();
   $('#btn-folder').onclick = () => GFPanels.folderDialog();
+  $('#btn-addons').onclick = () => GFPanels.addonsDialog();
+  $$('#maintabs button').forEach(b => b.onclick = () => setMainTab(b.dataset.main));
+  $('#struct-pick').onchange = e => GFPanels.showStructure(e.target.value);
+  $('#btn-render').onclick = () => GFPanels.renderStructure();
+  $('#btn-fold-sel').onclick = ev => { ev.stopPropagation(); GFPanels.predictMenu(ev); };
+  $$('#style3d button').forEach(b => b.onclick = () => {
+    GF.ui.style3d = b.dataset.s;
+    $$('#style3d button').forEach(x => x.classList.toggle('on', x === b));
+    GFPanels.applyStyle(b.dataset.s);
+  });
   document.addEventListener('click', hideCtx);
   document.addEventListener('contextmenu', ev => {
     /* only our own areas get a custom menu; inputs keep the system one */
@@ -840,6 +914,7 @@ Object.assign(GF, {
   renderSeqView, renderStatus, drawLines, setSelection, scrollToBase,
   mapOpts, saveActive, openPath, translateJS, rc, comp, active,
   loadPrimerSites, deleteFeature, showCtx, hideCtx, copySelection, translateSelection,
+  setMainTab, measure,
 });
 
 document.addEventListener('DOMContentLoaded', wire);

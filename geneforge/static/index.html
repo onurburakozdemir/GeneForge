@@ -11,6 +11,7 @@
   <header id="topbar">
     <div class="brand">Gene<span>Forge</span></div>
     <button id="btn-folder" class="btn ghost" title="Open another folder (⌘O)">Open folder…</button>
+    <button id="btn-addons" class="btn ghost" title="Optional components">Add-ons</button>
     <div id="folder" title=""></div>
     <div id="notices"></div>
     <div id="conn" class="offline" title="connecting…"></div>
@@ -34,6 +35,12 @@
     </aside>
 
     <main id="main">
+      <div id="maintabs">
+        <button data-main="dna" class="on">DNA</button
+        ><button data-main="structure">Structure &amp; protein</button>
+      </div>
+
+      <div id="dnaview">
       <div id="toolbar">
         <input id="seq-name" class="name" spellcheck="false" placeholder="sequence name">
         <span id="seq-meta" class="meta"></span>
@@ -52,10 +59,29 @@
         <button id="btn-save" class="btn primary">Save</button>
       </div>
 
-      <div id="mapwrap"><div id="map-linear"></div><div id="map-circular"></div><div id="viewer3d" class="hidden"></div></div>
+      <div id="mapwrap"><div id="map-linear"></div><div id="map-circular"></div></div>
       <div id="splitter"></div>
       <div id="seqwrap"><div id="seqscroll"><div id="seqinner"></div></div></div>
       <div id="statusbar"><span id="sel-info">no selection</span><span id="hover-info"></span></div>
+      </div><!-- /dnaview -->
+
+      <div id="structview" class="hidden">
+        <div id="structbar">
+          <select id="struct-pick" class="name" style="flex:0 1 320px"></select>
+          <button id="btn-fold-sel" class="btn" title="Predict a structure for the selected region">Predict from selection…</button>
+          <div class="spacer"></div>
+          <div class="seg" id="style3d">
+            <button data-s="cartoon" class="on">Cartoon</button
+            ><button data-s="stick">Sticks</button
+            ><button data-s="sphere">Spheres</button
+            ><button data-s="surface">Surface</button
+            ><button data-s="plddt">pLDDT</button>
+          </div>
+          <button id="btn-render" class="btn primary" title="Ray-traced PyMOL image">Render</button>
+        </div>
+        <div id="viewer3d"></div>
+        <div id="structstatus"><span id="struct-info">no structure loaded</span></div>
+      </div>
     </main>
 
     <aside id="right">
@@ -64,7 +90,7 @@
         <button data-tab="enzymes">Cutting enzymes</button>
         <button data-tab="primers">Primers</button>
         <button data-tab="tools">Tools</button>
-        <button data-tab="3d">3D</button>
+        <button data-tab="3d">Structure</button>
       </nav>
       <div id="panel"></div>
     </aside>
