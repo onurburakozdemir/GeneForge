@@ -131,8 +131,6 @@ GeneForge/
     bio.py            restriction, ORFs, primers, mutation, assembly
     tools.py          alignment, ViennaRNA, AlphaFold 3, ESMFold, PyMOL
     static/           the interface
-  testdata/           copies used during development
 ```
 
-Your own files are in `../MyGenes/` and nothing here writes to them unless you
-explicitly save to that path.
+GeneForge never writes to your sequence files unless you explicitly save.
