@@ -64,7 +64,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 #toolbar>*{flex:0 0 auto}
 #toolbar .spacer{flex:1 1 auto;min-width:4px}
 .name{border:1px solid transparent;border-radius:5px;padding:3px 7px;font:inherit;font-weight:600;
-  font-size:13.5px;background:transparent;outline:none;width:172px;flex:0 1 172px;min-width:80px}
+  font-size:13.5px;background:transparent;outline:none;flex:0 0 auto;min-width:90px;max-width:460px}
 .name:hover{border-color:var(--line)} .name:focus{border-color:var(--accent);background:var(--bg)}
 .meta{color:var(--ink3);font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .spacer{flex:1}
@@ -150,8 +150,8 @@ svg{display:block;user-select:none}
 .ov-cut{position:absolute;width:1px;background:#c53030}
 .ov-cutlabel{position:absolute;font:9px var(--ui);color:#c53030;white-space:nowrap}
 .ov-orf{position:absolute;height:3px;border-radius:2px;opacity:.75}
-#statusbar{height:24px;flex:0 0 24px;display:flex;align-items:center;gap:18px;padding:0 12px;
-  border-top:1px solid var(--line);background:var(--panel);font-size:11px;color:var(--ink2);
+#statusbar{height:28px;flex:0 0 28px;display:flex;align-items:center;gap:20px;padding:0 13px;
+  border-top:1px solid var(--line);background:var(--panel);font-size:12.5px;color:var(--ink);
   font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
 
 /* ---------- right panel ---------- */
@@ -223,7 +223,7 @@ table.t tr:hover td{background:var(--panel2)}
 #structbar>*{flex:0 0 auto}
 #structbar .spacer{flex:1 1 auto;min-width:4px}
 #structstatus{height:24px;flex:0 0 24px;display:flex;align-items:center;gap:18px;padding:0 12px;
-  border-top:1px solid var(--line);background:var(--panel);font-size:11px;color:var(--ink2);
+  border-top:1px solid var(--line);background:var(--panel);font-size:12.5px;color:var(--ink);
   white-space:nowrap;overflow:hidden}
 #viewer3d{flex:1;min-height:0;position:relative;background:#0f1216}
 #viewer3d.hidden{display:none}
@@ -284,3 +284,11 @@ table.t tr:hover td{background:var(--panel2)}
   text-align:center;pointer-events:auto;cursor:pointer}
 .ov-ribbon.on{outline:1.5px solid var(--ink);outline-offset:-1px}
 .ov-ribbon:hover{filter:brightness(.94)}
+
+/* topbar divider between the app menu and the open folder */
+#topbar .sep{width:1px;height:17px;background:var(--line);flex:0 0 1px;margin:0 2px}
+#statusbar b{font-weight:600}
+
+/* name curved along its feature on the circular map */
+.flabel-in{font:10px var(--ui);pointer-events:none;paint-order:stroke}
+.flabel.on{font-weight:650}

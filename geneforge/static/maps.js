@@ -234,6 +234,14 @@
 
   /* ---------------------------------------------------------------- circular */
 
+  /** A plain arc (no band) for <textPath> to follow. */
+  function arcLine(cx, cy, r, a0, a1, sweep) {
+    const big = Math.abs(a1 - a0) > Math.PI ? 1 : 0;
+    const [x0, y0] = polar(cx, cy, r, a0);
+    const [x1, y1] = polar(cx, cy, r, a1);
+    return `M${x0},${y0} A${r},${r} 0 ${big} ${sweep} ${x1},${y1}`;
+  }
+
   function polar(cx, cy, r, ang) { return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)]; }
 
   function arcPath(cx, cy, rIn, rOut, a0, a1, headAng) {
@@ -268,14 +276,8 @@
   let circDrag = null;
   window.addEventListener('mousemove', ev => {
     if (!circDrag) return;
-    if (circDrag.pan) {
-      circDrag.onPan(circDrag.px0 + (ev.clientX - circDrag.mx0),
-                     circDrag.py0 + (ev.clientY - circDrag.my0));
-      return;
-    }
-    const r = circDrag.svg.getBoundingClientRect();
-    const a = Math.atan2(ev.clientY - r.top - circDrag.cy, ev.clientX - r.left - circDrag.cx);
-    circDrag.onRotate(circDrag.rot0 + (a - circDrag.a0));
+    circDrag.onPan(circDrag.px0 + (ev.clientX - circDrag.mx0),
+                   circDrag.py0 + (ev.clientY - circDrag.my0));
   });
   window.addEventListener('mouseup', () => {
     if (circDrag) { circDrag.svg.style.cursor = 'grab'; circDrag = null; }
@@ -347,6 +349,7 @@
       .sort((x, y) => x.a - y.a || y.b - x.b);
     const packed = packLanes(feats, Math.ceil(L / 180));
     const laneW = Math.min(13, Math.max(7, (R - 40) / Math.max(packed.count, 1)));
+    const defs = el('defs', {}, svg);
     const labelAnchors = [];
 
     feats.forEach(item => {
@@ -368,9 +371,35 @@
           `${f.label}  ${f.type}\n${item.a + 1}..${item.b} (${item.b - item.a} bp)`;
       });
       g.addEventListener('click', ev => { ev.stopPropagation(); opts.onFeature && opts.onFeature(f); });
-      const mid = (ang(item.a) + ang(item.b)) / 2;
-      if (item.b - item.a > L / 110) {
-        labelAnchors.push({ f, ang: mid, r: rOut, g });
+
+      const a0 = ang(item.a), a1 = ang(item.b);
+      const mid = (a0 + a1) / 2;
+      const rMid = (rIn + rOut) / 2;
+      const label = f.label || f.type;
+      const textW = label.length * 5.5;
+      const arcLen = Math.abs(a1 - a0) * rMid;
+      const selected = opts.activeFeature === f.id;
+
+      if (arcLen > textW + 12 && laneW >= 9) {
+        // Enough room on the arc itself: curve the name along the feature
+        // rather than pointing at it from the margin.
+        const flip = Math.sin(mid) > 0;           // lower half would read upside down
+        const id = `fp_${f.id}`;
+        el('path', {
+          id, fill: 'none', stroke: 'none',
+          d: flip ? arcLine(cx, cy, rMid, a1, a0, 0) : arcLine(cx, cy, rMid, a0, a1, 1),
+        }, defs);
+        const t = el('text', { class: 'flabel-in', dy: 3.4 }, root);
+        const tp = el('textPath', {
+          startOffset: '50%', 'text-anchor': 'middle', fill: contrast(f.color),
+        }, t);
+        tp.setAttribute('href', `#${id}`);
+        tp.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#${id}`);
+        tp.textContent = label;
+      } else if (item.b - item.a > L / 110 || selected) {
+        // Too small to hold its name, so it gets a leader line. A selected
+        // feature always gets one, however small it is.
+        labelAnchors.push({ f, ang: mid, r: rOut, g, selected });
       }
     });
 
@@ -391,17 +420,21 @@
       arr.forEach(a => {
         const tx = side === 'r' ? colR : colL;
         const [ax, ay] = polar(cx, cy, a.r + 1, a.ang);
-        el('polyline', {
-          points: `${ax},${ay} ${a.px},${a.py} ${side === 'r' ? tx - 3 : tx + 3},${a.py}`,
-          fill: 'none', stroke: '#c7cdd4', 'stroke-width': .9
-        }, root);
-        const t = el('text', {
-          class: 'flabel', x: tx, y: a.py + 3,
-          'text-anchor': side === 'r' ? 'end' : 'start', fill: '#5b6672'
-        }, root);
         let label = a.f.label || a.f.type;
         const max = Math.floor((side === 'r' ? (W - colR + labelGap) : (colL + labelGap)) / 5.6) + 6;
         if (label.length > max) label = label.slice(0, Math.max(3, max - 1)) + '…';
+        // Stop the leader at the edge of the text instead of running through it.
+        const textW = label.length * 5.6;
+        const stopX = side === 'r' ? tx - textW - 5 : tx + textW + 5;
+        el('polyline', {
+          points: `${ax},${ay} ${a.px},${a.py} ${stopX},${a.py}`,
+          fill: 'none', stroke: '#c7cdd4', 'stroke-width': .9
+        }, root);
+        const t = el('text', {
+          class: 'flabel' + (a.selected ? ' on' : ''), x: tx, y: a.py + 3,
+          'text-anchor': side === 'r' ? 'end' : 'start',
+          fill: a.selected ? '#1b1f24' : '#5b6672'
+        }, root);
         t.textContent = label;
         t.style.cursor = 'pointer';
         t.addEventListener('click', ev => { ev.stopPropagation(); opts.onFeature && opts.onFeature(a.f); });
@@ -437,32 +470,32 @@
 
     /* drag to spin, wheel to zoom, double-click to reset */
     svg.style.cursor = 'grab';
+    svg.setAttribute('title', 'Drag to move \u00b7 scroll to turn \u00b7 shift-scroll to zoom \u00b7 double-click to reset');
     svg.addEventListener('mousedown', ev => {
-      if (ev.target.closest('.feat') || !opts.onRotate) return;
-      const r = svg.getBoundingClientRect();
+      if (!opts.onPan) return;
       circDrag = {
-        svg, cx: cx + panX, cy: cy + panY, rot0: rot, onRotate: opts.onRotate,
-        a0: Math.atan2(ev.clientY - r.top - cy - panY,
-                       ev.clientX - r.left - cx - panX),
-        // Shift turns the drag into a pan, which is what makes zoom usable.
-        pan: ev.shiftKey && !!opts.onPan, onPan: opts.onPan,
+        svg, onPan: opts.onPan,
         mx0: ev.clientX, my0: ev.clientY,
-        px0: opts.panX || 0, py0: opts.panY || 0,
+        px0: panX, py0: panY,
       };
-      svg.style.cursor = circDrag.pan ? 'move' : 'grabbing';
+      svg.style.cursor = 'grabbing';
       ev.preventDefault();
     });
     svg.addEventListener('wheel', ev => {
-      if (!opts.onView) return;
       ev.preventDefault();
-      const r = svg.getBoundingClientRect();
-      const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-      const next = Math.max(0.4, Math.min(6, zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
-      // Hold the point under the cursor still, so zooming in on the top of the
-      // plasmid keeps the top on screen rather than flying off it.
-      opts.onView(next,
-        panX + (zoom - next) * (mx - panX - cx) / zoom,
-        panY + (zoom - next) * (my - panY - cy) / zoom);
+      if (ev.shiftKey || ev.metaKey || ev.ctrlKey) {
+        if (!opts.onView) return;
+        const r = svg.getBoundingClientRect();
+        const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+        const next = Math.max(0.4, Math.min(6, zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
+        // Hold the point under the cursor still, so zooming in on the top of
+        // the plasmid keeps the top on screen rather than flying off it.
+        opts.onView(next,
+          panX + (zoom - next) * (mx - panX - cx) / zoom,
+          panY + (zoom - next) * (my - panY - cy) / zoom);
+      } else if (opts.onRotate) {
+        opts.onRotate(rot + ev.deltaY * 0.0035);
+      }
     }, { passive: false });
     svg.addEventListener('dblclick', ev => {
       if (ev.target.closest('.feat') || !opts.onResetView) return;

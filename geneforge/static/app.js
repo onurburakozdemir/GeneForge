@@ -196,8 +196,12 @@ function renderPrimerList() {
 
 function renderToolbar() {
   const s = active();
-  $('#seq-name').value = s ? s.name : '';
-  $('#seq-name').disabled = !s;
+  const nameEl = $('#seq-name');
+  nameEl.value = s ? s.name : '';
+  nameEl.disabled = !s;
+  nameEl.title = s ? s.name : '';
+  // Grow to fit the name instead of truncating it.
+  nameEl.style.width = s ? Math.min(460, Math.max(90, s.name.length * 8.2 + 22)) + 'px' : '150px';
   $('#seq-meta').textContent = s
     ? `${s.seq.length.toLocaleString()} bp · ${s.topology}${s.dirty ? ' · unsaved' : (s.path ? '' : ' · not on disk')}`
     : '';
@@ -269,7 +273,7 @@ function featureLanes(s) {
   return { lane, count: Math.min(ends.length, RIBBON_MAX), items };
 }
 
-const RIBBON_MAX = 5;      // beyond this the map is the better place to look
+const RIBBON_MAX = 24;     // show every feature; lanes only grow where they overlap
 const RIBBON_H = 15;
 
 function trackPlan() {
