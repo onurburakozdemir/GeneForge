@@ -26,10 +26,17 @@ _PARAM_LOCK = threading.Lock()   # ViennaRNA energy parameters are global state
 # --------------------------------------------------------------------------
 
 def _have(mod: str) -> bool:
+    """Is a module importable, without actually importing it?
+
+    Importing heavy extension modules just to probe for them is dangerous:
+    PyMOL and torch each link their own OpenMP runtime, and loading a second
+    one into the process aborts it with "OMP: Error #15". Looking up the
+    spec answers the question without running any of that code.
+    """
     try:
-        __import__(mod)
-        return True
-    except Exception:
+        import importlib.util
+        return importlib.util.find_spec(mod) is not None
+    except (ImportError, AttributeError, ValueError):
         return False
 
 
@@ -174,11 +181,14 @@ def system_specs() -> dict[str, Any]:
                         break
     except Exception:
         out.setdefault("ram_gb", None)
+    # Deliberately does NOT import torch. torch ships its own libomp, and
+    # loading it beside the one already in the environment aborts the process
+    # with "OMP: Error #15". The version comes from package metadata instead,
+    # and the device is chosen inside the folding subprocess where torch is
+    # the only OpenMP user.
     try:
-        import torch
-        out["torch"] = torch.__version__
-        out["mps"] = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
-        out["cuda"] = bool(torch.cuda.is_available())
+        import importlib.metadata as _md
+        out["torch"] = _md.version("torch")
     except Exception:
         out["torch"] = None
     return out
@@ -437,57 +447,78 @@ ZINC_FINGER_HINT = (
 # ESMFold (optional, local)
 # --------------------------------------------------------------------------
 
-_ESM_CACHE: dict[str, Any] = {}
 
 
-def esmfold(sequence: str, device: str | None = None,
-            max_len: int = 700, min_ram_gb: float = 15.0) -> dict[str, Any]:
-    """Fold a single protein chain locally with ESMFold.
+_ESM_CHILD = r"""
+import json, sys
+seq, out_path = sys.argv[1], sys.argv[2]
+import torch
+from transformers import AutoTokenizer, EsmForProteinFolding
+device = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else (
+    "cuda" if torch.cuda.is_available() else "cpu")
+tok = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
+model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=True)
+model.eval().to(device)
+model.esm = model.esm.float()
+try:
+    model.trunk.set_chunk_size(64)
+except Exception:
+    pass
+inputs = tok([seq], return_tensors="pt", add_special_tokens=False)
+inputs = {k: v.to(device) for k, v in inputs.items()}
+with torch.no_grad():
+    o = model(**inputs)
+open(out_path, "w").write(model.output_to_pdb(o)[0])
+p = float(o["plddt"][0, :, 1].mean())
+print(json.dumps({"mean_plddt": round(p * 100 if p <= 1 else p, 1), "device": device}))
+"""
 
-    Refuses rather than thrashing: checks RAM and length first. Single chain,
-    protein only - no DNA, no multimers, no metals.
+
+def esmfold(sequence: str, device: str | None = None, max_len: int = 700,
+            min_ram_gb: float = 15.0, timeout: int = 2400) -> dict[str, Any]:
+    """Fold a single protein chain locally with ESMFold, in a child process.
+
+    torch is never imported into the server: it bundles its own OpenMP runtime
+    and loading it alongside the environment's aborts the whole application.
+    Running it out of process also means a failed fold cannot take GeneForge
+    down with it. Single chain, protein only - no DNA, multimers or metals.
     """
+    import sys
     if not (_have("torch") and _have("transformers")):
-        return {"error": "ESMFold not installed. Run: geneforge-setup --with-esmfold"}
+        return {"error": "ESMFold not installed. Add it from Add-ons."}
     aa = "".join(ch for ch in (sequence or "").upper() if ch.isalpha()).replace("*", "")
     if not aa:
         return {"error": "empty protein sequence"}
     if len(aa) > max_len:
         return {"error": f"{len(aa)} residues exceeds the {max_len}-residue guard for local folding"}
-    specs = system_specs()
-    ram = specs.get("ram_gb")
+    ram = system_specs().get("ram_gb")
     if ram is not None and ram < min_ram_gb:
-        return {"error": f"ESMFold needs ~16 GB RAM; this machine reports {ram} GB. "
+        return {"error": f"ESMFold needs about 16 GB of RAM; this machine reports {ram} GB. "
                          f"Use the AlphaFold 3 export instead."}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        script = os.path.join(tmp, "fold.py")
+        pdb_path = os.path.join(tmp, "out.pdb")
+        with open(script, "w") as fh:
+            fh.write(_ESM_CHILD)
+        cmd = [sys.executable, script, aa, pdb_path]
+        if device:
+            cmd.append(device)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return {"error": f"ESMFold timed out after {timeout // 60} minutes"}
+        if proc.returncode != 0 or not os.path.exists(pdb_path):
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            return {"error": "ESMFold failed: " + (tail[-1] if tail else f"exit {proc.returncode}")}
+        with open(pdb_path) as fh:
+            pdb = fh.read()
     try:
-        import torch
-        from transformers import AutoTokenizer, EsmForProteinFolding
-        if "model" not in _ESM_CACHE:
-            tok = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
-            model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1",
-                                                         low_cpu_mem_usage=True)
-            model.eval()
-            if device is None:
-                # MPS still misses ops ESMFold needs; CPU is slower but correct.
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            model.to(device)
-            model.esm = model.esm.float()
-            try:
-                model.trunk.set_chunk_size(64)
-            except Exception:
-                pass
-            _ESM_CACHE.update({"model": model, "tok": tok, "device": device})
-        model, tok = _ESM_CACHE["model"], _ESM_CACHE["tok"]
-        inputs = tok([aa], return_tensors="pt", add_special_tokens=False)
-        inputs = {k: v.to(_ESM_CACHE["device"]) for k, v in inputs.items()}
-        with torch.no_grad():
-            out = model(**inputs)
-        pdb = model.output_to_pdb(out)[0]
-        plddt = float(out["plddt"][0, :, 1].mean()) * (100 if float(out["plddt"].max()) <= 1 else 1)
-        return {"pdb": pdb, "length": len(aa), "mean_plddt": round(plddt, 1),
-                "device": _ESM_CACHE["device"], "engine": "ESMFold v1"}
-    except Exception as exc:
-        return {"error": f"ESMFold failed: {exc}"}
+        meta = json.loads((proc.stdout or "{}").strip().splitlines()[-1])
+    except Exception:
+        meta = {}
+    return {"pdb": pdb, "length": len(aa), "engine": "ESMFold v1",
+            "mean_plddt": meta.get("mean_plddt"), "device": meta.get("device")}
 
 
 # --------------------------------------------------------------------------

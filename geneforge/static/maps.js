@@ -263,6 +263,24 @@
     return `M${x0o},${y0o} A${rOut},${rOut} 0 ${big} 1 ${x1o},${y1o} L${x1i},${y1i} A${rIn},${rIn} 0 ${big} 0 ${x0i},${y0i} Z`;
   }
 
+  /* Spin state lives at module scope: renderCircular runs on every repaint,
+     so per-render window listeners would pile up. */
+  let circDrag = null;
+  window.addEventListener('mousemove', ev => {
+    if (!circDrag) return;
+    if (circDrag.pan) {
+      circDrag.onPan(circDrag.px0 + (ev.clientX - circDrag.mx0),
+                     circDrag.py0 + (ev.clientY - circDrag.my0));
+      return;
+    }
+    const r = circDrag.svg.getBoundingClientRect();
+    const a = Math.atan2(ev.clientY - r.top - circDrag.cy, ev.clientX - r.left - circDrag.cx);
+    circDrag.onRotate(circDrag.rot0 + (a - circDrag.a0));
+  });
+  window.addEventListener('mouseup', () => {
+    if (circDrag) { circDrag.svg.style.cursor = 'grab'; circDrag = null; }
+  });
+
   function renderCircular(host, data, opts) {
     opts = opts || {};
     host.innerHTML = '';
@@ -277,18 +295,28 @@
     const sweep = Math.PI * 2 - gap;
     // Keep the ring proportional to the panel and the labels close to it,
     // instead of flinging leader lines out to the container edges.
+    const zoom = Math.max(0.4, Math.min(6, opts.zoom || 1));
+    const rot = opts.rotation || 0;
+    const panX = opts.panX || 0, panY = opts.panY || 0;
     const R = Math.max(46, Math.min(W * 0.40, H / 2 - 42));
+    // Everything is drawn once at base size, then pan and zoom are applied to
+    // the whole group. Labels and leader lines therefore move with the ring
+    // instead of staying pinned to the panel edges.
+    const root = el('g', {
+      transform: `translate(${panX} ${panY}) translate(${cx} ${cy}) ` +
+                 `scale(${zoom}) translate(${-cx} ${-cy})`,
+    }, svg);
     const labelGap = Math.min(96, Math.max(44, W * 0.12));
     const colR = Math.min(W - 6, cx + R + labelGap);
     const colL = Math.max(6, cx - R - labelGap);
-    const ang = p => -Math.PI / 2 + gap / 2 + (Math.max(0, Math.min(L, p)) / L) * sweep;
+    const ang = p => -Math.PI / 2 + gap / 2 + (Math.max(0, Math.min(L, p)) / L) * sweep + rot;
 
     /* backbone. An SVG arc whose start and end coincide draws nothing, so a
        closed molecule needs a real circle rather than a 0-to-L arc. */
     if (linear) {
-      el('path', { d: arcPath(cx, cy, R - 1, R + 1, ang(0), ang(L), 0), fill: '#aab2bd' }, svg);
+      el('path', { d: arcPath(cx, cy, R - 1, R + 1, ang(0), ang(L), 0), fill: '#aab2bd' }, root);
     } else {
-      el('circle', { cx, cy, r: R, fill: 'none', stroke: '#aab2bd', 'stroke-width': 2 }, svg);
+      el('circle', { cx, cy, r: R, fill: 'none', stroke: '#aab2bd', 'stroke-width': 2 }, root);
     }
 
     /* ticks */
@@ -298,19 +326,19 @@
       const a = ang(p);
       const [x1, y1] = polar(cx, cy, R + 2, a);
       const [x2, y2] = polar(cx, cy, R + 7, a);
-      el('line', { class: 'tick', x1, y1, x2, y2 }, svg);
+      el('line', { class: 'tick', x1, y1, x2, y2 }, root);
       const [tx, ty] = polar(cx, cy, R + 15, a);
       const t = el('text', {
         class: 'ticktext', x: tx, y: ty + 3,
         'text-anchor': Math.cos(a) > .25 ? 'start' : Math.cos(a) < -.25 ? 'end' : 'middle'
-      }, svg);
+      }, root);
       t.textContent = p.toLocaleString();
     }
 
     /* selection */
     if (opts.selection && opts.selection[1] > opts.selection[0]) {
       const [s, e] = opts.selection;
-      el('path', { class: 'selband', d: arcPath(cx, cy, R - 9, R + 9, ang(s), ang(e), 0) }, svg);
+      el('path', { class: 'selband', d: arcPath(cx, cy, R - 9, R + 9, ang(s), ang(e), 0) }, root);
     }
 
     /* features, packed inward */
@@ -327,7 +355,7 @@
       const rOut = R - 7 - lane * (laneW + 2.5);
       const rIn = rOut - laneW;
       if (rIn < 16) return;
-      const g = el('g', { class: 'feat' + (opts.activeFeature === f.id ? ' sel' : '') }, svg);
+      const g = el('g', { class: 'feat' + (opts.activeFeature === f.id ? ' sel' : '') }, root);
       g.dataset.featureId = f.id;
       (f.segments || [[item.a, item.b]]).forEach(([a, b]) => {
         const a0 = ang(a), a1 = ang(Math.max(b, a + Math.max(1, L / 900)));
@@ -366,11 +394,11 @@
         el('polyline', {
           points: `${ax},${ay} ${a.px},${a.py} ${side === 'r' ? tx - 3 : tx + 3},${a.py}`,
           fill: 'none', stroke: '#c7cdd4', 'stroke-width': .9
-        }, svg);
+        }, root);
         const t = el('text', {
           class: 'flabel', x: tx, y: a.py + 3,
           'text-anchor': side === 'r' ? 'end' : 'start', fill: '#5b6672'
-        }, svg);
+        }, root);
         let label = a.f.label || a.f.type;
         const max = Math.floor((side === 'r' ? (W - colR + labelGap) : (colL + labelGap)) / 5.6) + 6;
         if (label.length > max) label = label.slice(0, Math.max(3, max - 1)) + '…';
@@ -386,7 +414,7 @@
       const headAng = Math.min((a1 - a0) * .45, 0.05) * (pr.strand === -1 ? -1 : 1);
       const p = el('path', {
         class: 'primerbar', d: arcPath(cx, cy, R + 4, R + 9, a0, a1, headAng), fill: '#b7791f'
-      }, svg);
+      }, root);
       p.appendChild(el('title', {}, null)).textContent =
         `${pr.name} ${pr.strand === -1 ? '←' : '→'} ${pr.start + 1}..${pr.end}`;
     });
@@ -396,16 +424,50 @@
       const a = ang(c.pos);
       const [x1, y1] = polar(cx, cy, R + 2, a);
       const [x2, y2] = polar(cx, cy, R + 10, a);
-      el('line', { class: 'cut', x1, y1, x2, y2 }, svg);
+      el('line', { class: 'cut', x1, y1, x2, y2 }, root);
     });
 
     /* centre caption */
-    const t1 = el('text', { class: 'title', x: cx, y: cy - 4, 'text-anchor': 'middle' }, svg);
+    const t1 = el('text', { class: 'title', x: cx, y: cy - 4, 'text-anchor': 'middle' }, root);
     let nm = data.name || '';
     if (nm.length > 22) nm = nm.slice(0, 21) + '…';
     t1.textContent = nm;
-    const t2 = el('text', { class: 'subtitle', x: cx, y: cy + 12, 'text-anchor': 'middle' }, svg);
+    const t2 = el('text', { class: 'subtitle', x: cx, y: cy + 12, 'text-anchor': 'middle' }, root);
     t2.textContent = `${L.toLocaleString()} bp · ${linear ? 'linear' : 'circular'}`;
+
+    /* drag to spin, wheel to zoom, double-click to reset */
+    svg.style.cursor = 'grab';
+    svg.addEventListener('mousedown', ev => {
+      if (ev.target.closest('.feat') || !opts.onRotate) return;
+      const r = svg.getBoundingClientRect();
+      circDrag = {
+        svg, cx: cx + panX, cy: cy + panY, rot0: rot, onRotate: opts.onRotate,
+        a0: Math.atan2(ev.clientY - r.top - cy - panY,
+                       ev.clientX - r.left - cx - panX),
+        // Shift turns the drag into a pan, which is what makes zoom usable.
+        pan: ev.shiftKey && !!opts.onPan, onPan: opts.onPan,
+        mx0: ev.clientX, my0: ev.clientY,
+        px0: opts.panX || 0, py0: opts.panY || 0,
+      };
+      svg.style.cursor = circDrag.pan ? 'move' : 'grabbing';
+      ev.preventDefault();
+    });
+    svg.addEventListener('wheel', ev => {
+      if (!opts.onView) return;
+      ev.preventDefault();
+      const r = svg.getBoundingClientRect();
+      const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+      const next = Math.max(0.4, Math.min(6, zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      // Hold the point under the cursor still, so zooming in on the top of the
+      // plasmid keeps the top on screen rather than flying off it.
+      opts.onView(next,
+        panX + (zoom - next) * (mx - panX - cx) / zoom,
+        panY + (zoom - next) * (my - panY - cy) / zoom);
+    }, { passive: false });
+    svg.addEventListener('dblclick', ev => {
+      if (ev.target.closest('.feat') || !opts.onResetView) return;
+      opts.onResetView();
+    });
     return svg;
   }
 

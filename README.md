@@ -149,6 +149,7 @@ GeneForge/
   setup.sh            install + build the app
   environment.yml     the mamba environment
   make_icon.py        generates the app icon (standard library only)
+  diagnose.sh         writes diagnostic.txt; runs itself if the app crashes
   geneforge/
     __main__.py       launcher
     server.py         REST + WebSocket

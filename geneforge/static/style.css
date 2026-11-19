@@ -277,3 +277,10 @@ table.t tr:hover td{background:var(--panel2)}
 .row .x{opacity:0;color:var(--ink3);padding:0 2px;margin-left:4px}
 .row:hover .x{opacity:1}
 .row .x:hover{color:var(--err)}
+
+/* named feature ribbon above the bases */
+.ov-ribbon{position:absolute;height:13px;box-sizing:border-box;border-radius:3px;
+  font:10px/13px var(--ui);padding:0 5px;white-space:nowrap;overflow:hidden;
+  text-align:center;pointer-events:auto;cursor:pointer}
+.ov-ribbon.on{outline:1.5px solid var(--ink);outline-offset:-1px}
+.ov-ribbon:hover{filter:brightness(.94)}

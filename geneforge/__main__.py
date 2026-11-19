@@ -85,15 +85,59 @@ def main(argv: list[str] | None = None) -> int:
             pass
         return 0
 
-    if not args.browser:
+    marker = os.path.join(os.path.expanduser("~"), ".geneforge-window-failed")
+
+    # A marker left by an earlier failure goes stale as soon as the code
+    # changes, so fixing the cause re-enables the window automatically.
+    if os.path.exists(marker):
+        try:
+            pkg = os.path.dirname(os.path.abspath(__file__))
+            newest = max(os.path.getmtime(os.path.join(pkg, f))
+                         for f in os.listdir(pkg) if f.endswith(".py"))
+            if newest > os.path.getmtime(marker):
+                os.unlink(marker)
+        except OSError:
+            pass
+
+    if not args.browser and os.path.exists(marker):
+        print("geneforge: the native window failed last time, so this run opens a "
+              "browser tab instead.\n"
+              f"           delete {marker} to try the window again.", file=sys.stderr)
+    elif not args.browser:
         try:
             import webview  # pywebview
-            window = webview.create_window("GeneForge", url, width=1500, height=950,
-                                           min_size=(1100, 700))
-            webview.start()
-            return 0
         except Exception as exc:
-            print(f"geneforge: native window unavailable ({exc}); opening a browser tab", file=sys.stderr)
+            print(f"geneforge: pywebview unavailable ({exc}); opening a browser tab",
+                  file=sys.stderr)
+        else:
+            # A failure inside Cocoa's event loop takes the whole process down, so
+            # no except clause here can catch it. Drop a marker first: if we never
+            # reach the clearing timer, the next launch falls back to a browser tab
+            # instead of appearing to crash on open.
+            try:
+                with open(marker, "w") as fh:
+                    fh.write(url)
+            except OSError:
+                pass
+
+            def clear_marker():
+                try:
+                    os.unlink(marker)
+                except OSError:
+                    pass
+
+            threading.Timer(20.0, clear_marker).start()
+            try:
+                webview.create_window("GeneForge", url, width=1500, height=950,
+                                      min_size=(1100, 700))
+                webview.start()
+            except BaseException as exc:
+                clear_marker()
+                print(f"geneforge: native window failed ({type(exc).__name__}: {exc}); "
+                      "opening a browser tab", file=sys.stderr)
+            else:
+                clear_marker()
+                return 0
 
     import webbrowser
     webbrowser.open(url)

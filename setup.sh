@@ -152,16 +152,45 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
+# Resolve the interpreter now; a GUI app should not depend on `mamba run`.
+ENVPY="$($MAMBA run -n "$ENV_NAME" python -c 'import sys; print(sys.executable)' 2>/dev/null | tail -1)"
+[ -x "$ENVPY" ] || ENVPY=""
+
 cat > "$APP/Contents/MacOS/GeneForge" <<LAUNCH
 #!/bin/bash
-# Launcher written by setup.sh — paths are absolute on purpose.
-export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-}"
-export PATH="/usr/local/bin:/opt/homebrew/bin:\$PATH"
+# Launcher written by setup.sh - absolute paths on purpose.
+PROJ="$HERE"
 LOG="\$HOME/Library/Logs/GeneForge.log"
+LOG2="\$PROJ/geneforge-launch.log"
 mkdir -p "\$(dirname "\$LOG")"
-cd "$HERE"
-echo "--- \$(date) ---" >> "\$LOG"
-exec "$MAMBA" run -n "$ENV_NAME" python -m geneforge >> "\$LOG" 2>&1
+exec > >(tee -a "\$LOG" "\$LOG2") 2>&1
+echo "--- \$(date) ---"
+cd "\$PROJ" || { echo "FATAL: project folder missing"; exit 1; }
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\$PATH"
+PY="$ENVPY"
+if [ ! -x "\$PY" ]; then
+  PY="\$("$MAMBA" run -n "$ENV_NAME" python -c 'import sys; print(sys.executable)' 2>/dev/null | tail -1)"
+fi
+if [ ! -x "\$PY" ]; then
+  echo "FATAL: the '$ENV_NAME' environment was not found. Run ./setup.sh again."
+  osascript -e 'display alert "GeneForge" message "The geneforge environment was not found.\n\nRun ./setup.sh in the GeneForge folder."' >/dev/null 2>&1
+  exit 1
+fi
+export PATH="\$(dirname "\$PY"):\$PATH"
+echo "python: \$PY"
+"\$PY" -m geneforge
+STATUS=\$?
+echo "exited with status \$STATUS"
+if [ "\$STATUS" -ne 0 ]; then
+  if [ -x "\$PROJ/diagnose.sh" ]; then
+    "\$PROJ/diagnose.sh" >/dev/null 2>&1
+    MSG="GeneForge crashed (status \$STATUS).\\n\\nDiagnostic report written to:\\n\$PROJ/diagnostic.txt"
+  else
+    MSG="GeneForge crashed (status \$STATUS).\\n\\nLog: \$LOG2"
+  fi
+  osascript -e "display alert \\"GeneForge\\" message \\"\$MSG\\"" >/dev/null 2>&1
+fi
+exit \$STATUS
 LAUNCH
 chmod +x "$APP/Contents/MacOS/GeneForge"
 ok "built $APP"

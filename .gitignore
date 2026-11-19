@@ -19,3 +19,6 @@ _to_delete/
 # Kept local, not published
 testdata/
 HANDOFF.md
+
+geneforge-launch.log
+diagnostic.txt

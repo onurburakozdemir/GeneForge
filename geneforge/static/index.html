@@ -54,6 +54,9 @@
         <label class="chk"><input type="checkbox" id="show-orfs"> ORFs</label>
         <label class="chk"><input type="checkbox" id="show-primers" checked> Primers</label>
         <label class="chk"><input type="checkbox" id="show-cuts" checked> Cut sites</label>
+        <div class="seg" id="spacing" title="Row spacing in the sequence view">
+          <button data-gap="-1">−</button><button data-gap="1">+</button>
+        </div>
         <div class="spacer"></div>
         <button id="btn-annotate" class="btn" disabled>Annotate</button>
         <button id="btn-save" class="btn primary">Save</button>
@@ -87,7 +90,7 @@
     <aside id="right">
       <nav id="tabs">
         <button data-tab="features" class="on">Features</button>
-        <button data-tab="enzymes">Cutting enzymes</button>
+        <button data-tab="enzymes">Enzymes</button>
         <button data-tab="primers">Primers</button>
         <button data-tab="tools">Tools</button>
         <button data-tab="3d">Structure</button>

@@ -1,4 +1,7 @@
 /* GeneForge right-hand panels, dialogs and the structure viewer. */
+// Look up a control that may not exist in the current panel. Returns a
+// throwaway object rather than null so wiring never throws mid-render.
+var __pick = (root, sel) => root.querySelector(sel) || {};
 (function () {
   const $ = s => document.querySelector(s);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -57,7 +60,7 @@
       ${hasSel
         ? `<div class="hint">${(r[0] + 1).toLocaleString()}–${r[1].toLocaleString()} · ${(r[1] - r[0]).toLocaleString()} bp</div>
            <button class="btn" data-a="annotate" style="width:100%;margin:5px 0">Annotate selection</button>`
-        : '<div class="hint">Drag across the sequence or the map to select. Right-click for copy, translate and annotate.</div>'}
+        : '<div class="hint">Drag to select. Right-click for more.</div>'}
       <div class="ptitle">Features (${feats.length})</div><div id="featlist"></div>`;
     p.querySelector('[name=topo]').onchange = e =>
       GF.patch('/api/sequences/' + s.id, { topology: e.target.value })
@@ -86,7 +89,7 @@
       };
       list.appendChild(row);
     });
-    const ann = p.querySelector('[data-a=annotate]');
+    const ann = __pick(p, '[data-a=annotate]');
     if (ann) ann.onclick = annotateDialog;
   }
 
@@ -155,7 +158,7 @@
   function enzymesPanel(p, s) {
     const r = GF.ui.restriction;
     const shown = GF.ui.showCuts;
-    p.innerHTML = `<div class="ptitle">Cutting enzymes</div>
+    p.innerHTML = `<div class="ptitle">Enzymes</div>
       <div class="field"><input name="enzq" list="enzopts" placeholder="add an enzyme, then press Enter…">
         <datalist id="enzopts">${COMMON.map(n => `<option>${n}</option>`).join('')}</datalist></div>
       <div id="chips" style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 2px 8px"></div>
@@ -197,18 +200,18 @@
       GF.loadRestriction().then(render);
     };
     q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
-    p.querySelector('[data-a=toggle]').onclick = () => {
+    __pick(p, '[data-a=toggle]').onclick = () => {
       GF.ui.showCuts = !GF.ui.showCuts;
       const box = document.querySelector('#show-cuts');
       if (box) box.checked = GF.ui.showCuts;
       GF.renderMaps(); GF.drawLines(); render();
     };
-    p.querySelector('[data-a=clear]').onclick = () => {
+    __pick(p, '[data-a=clear]').onclick = () => {
       GF.ui.enzymes = []; GF.ui.cuts = []; GF.ui.restriction = null;
       GF.renderMaps(); GF.drawLines(); render();
     };
-    p.querySelector('[data-a=common]').onclick = () => { GF.ui.enzymes = COMMON.slice(); GF.loadRestriction().then(render); };
-    p.querySelector('[data-a=unique]').onclick = () => {
+    __pick(p, '[data-a=common]').onclick = () => { GF.ui.enzymes = COMMON.slice(); GF.loadRestriction().then(render); };
+    __pick(p, '[data-a=unique]').onclick = () => {
       if (!r) return; GF.ui.enzymes = r.unique.slice(); GF.loadRestriction().then(render);
     };
     const out = p.querySelector('#enzresult');
@@ -261,7 +264,7 @@
       row.onclick = () => { navigator.clipboard.writeText(pr.seq); GF.toast('copied ' + pr.name); };
       list.appendChild(row);
     });
-    const btn = p.querySelector('[data-a=design]');
+    const btn = __pick(p, '[data-a=design]');
     if (!btn) return;
     btn.onclick = () => {
       btn.disabled = true; btn.textContent = 'designing…';
@@ -316,18 +319,12 @@
       <div class="ptitle">Mutagenesis</div>
       <button class="btn" data-a="mutate" style="width:100%;margin:2px">Make protein variant…</button>
 
-      <div class="ptitle">Structure prediction</div>
-      <div class="hint">Prediction and 3D live in the <b>Structure &amp; protein</b> tab,
-        next to DNA at the top of this pane.</div>
-      <button class="btn" data-a="go3d" style="width:100%;margin:2px">Open Structure &amp; protein</button>
-      ${cap.specs && cap.specs.ram_gb ? `<div class="hint">This machine: ${cap.specs.ram_gb} GB RAM · ${cap.specs.cpus} cores${cap.specs.chip ? ' · ' + esc(cap.specs.chip) : ''}</div>` : ''}
-
       <div class="ptitle">Assembly</div>
       <div class="frow" style="margin:0 2px">
         <button class="btn" data-a="gg">Golden Gate…</button>
         <button class="btn" data-a="gib">Gibson…</button></div>`;
 
-    p.querySelector('[data-a=orfs]').onclick = () => {
+    __pick(p, '[data-a=orfs]').onclick = () => {
       GF.ui.showOrfs = true; $('#show-orfs').checked = true;
       GF.loadOrfs().then(() => {
         const o = GF.ui.orfs;
@@ -338,7 +335,7 @@
           : '<div class="empty">none ≥30 aa</div>';
       });
     };
-    p.querySelector('[data-a=orfcds]').onclick = () => {
+    __pick(p, '[data-a=orfcds]').onclick = () => {
       if (!GF.ui.orfs.length) return GF.toast('find ORFs first');
       const o = GF.ui.orfs[0];
       GF.post(`/api/sequences/${s.id}/features`, {
@@ -346,7 +343,7 @@
         segments: [[o.start, o.end]], qualifiers: { translation: o.protein },
       }).then(() => GF.toast('CDS added')).catch(e => GF.toast(e.message));
     };
-    p.querySelector('[data-a=fold]').onclick = () => {
+    __pick(p, '[data-a=fold]').onclick = () => {
       const body = { id: s.id, kind: 'dna' };
       if (hasSel) { body.start = r[0]; body.end = r[1]; }
       p.querySelector('#foldout').innerHTML = '<div class="hint">folding…</div>';
@@ -358,7 +355,7 @@
 ${esc(res.structure.slice(0, 400))}</div>`;
       }).catch(e => p.querySelector('#foldout').innerHTML = `<div class="hint" style="color:#c53030">${esc(e.message)}</div>`);
     };
-    p.querySelector('[data-a=rbs]').onclick = () => {
+    __pick(p, '[data-a=rbs]').onclick = () => {
       p.querySelector('#foldout').innerHTML = '<div class="hint">checking RBS…</div>';
       GF.post(`/api/sequences/${s.id}/rbs`, {}).then(res => {
         if (res.error) { p.querySelector('#foldout').innerHTML = `<div class="hint" style="color:#c05621">${esc(res.error)}</div>`; return; }
@@ -372,12 +369,10 @@ ${esc(res.structure.slice(lo - pad, hi + 20))}
 ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
       }).catch(e => GF.toast(e.message, 5000));
     };
-    p.querySelector('[data-a=align]').onclick = () => GFPanels.alignDialog();
-    p.querySelector('[data-a=mutate]').onclick = () => GFPanels.mutateDialog(s);
-    p.querySelector('[data-a=af3]').onclick = () => GFPanels.af3Dialog();
-    p.querySelector('[data-a=gg]').onclick = () => GFPanels.assemblyDialog('goldengate');
-    p.querySelector('[data-a=gib]').onclick = () => GFPanels.assemblyDialog('gibson');
-    p.querySelector('[data-a=go3d]').onclick = () => GF.setMainTab('structure');
+    __pick(p, '[data-a=align]').onclick = () => GFPanels.alignDialog();
+    __pick(p, '[data-a=mutate]').onclick = () => GFPanels.mutateDialog(s);
+    __pick(p, '[data-a=gg]').onclick = () => GFPanels.assemblyDialog('goldengate');
+    __pick(p, '[data-a=gib]').onclick = () => GFPanels.assemblyDialog('gibson');
   }
 
   GFPanels.primersPanel = primersPanel;
@@ -735,32 +730,29 @@ ${' '.repeat(pad)}${'^'.repeat(hi - lo)}</div>`;
     const cap = H.CAPS || {};
     const cur = GF.ui.structPath;
     p.innerHTML = `
-      ${GF.ui.mainTab !== 'structure'
-        ? '<button class="btn" data-a="open3d" style="width:100%;margin:2px 2px 8px">Open the Structure tab</button>' : ''}
       <div class="ptitle">Structures in folder</div>
       <div id="stlist"><div class="empty">scanning…</div></div>
       <div class="ptitle">Predict</div>
       <button class="btn" data-a="af3" style="width:100%;margin:2px">Build AlphaFold 3 job…</button>
       <button class="btn" data-a="esm" style="width:100%;margin:2px" ${cap.esmfold ? '' : 'disabled'}>
         Fold selection with ESMFold</button>
-      ${cap.esmfold ? '' : `<div class="hint">ESMFold is not installed.
-        <a href="#" data-a="addons">Add it from Add-ons</a>.</div>`}
+      ${cap.esmfold ? '' : `<div class="hint">ESMFold not installed.
+        <a href="#" data-a="addons">Add</a></div>`}
       <div class="ptitle">Ray-traced image</div>
       <div class="field"><label>Style</label><select name="style">
         <option value="cartoon">cartoon, rainbow</option><option value="surface">surface</option>
         <option value="sticks">sticks</option><option value="cartoon_bfactor">cartoon by B-factor / pLDDT</option>
       </select></div>
-      <button class="btn" data-a="pymol" style="width:100%;margin:2px" ${cap.pymol && cur ? '' : 'disabled'}>
-        ${cur ? 'Render with PyMOL' : 'Pick a structure first'}</button>
-      ${cap.pymol ? '' : '<div class="hint" style="color:#c05621">PyMOL not installed</div>'}
+      <button class="btn" data-a="pymol" style="width:100%;margin:2px" ${cap.pymol && cur ? '' : 'disabled'}
+        title="${cap.pymol ? (cur ? 'Render this structure' : 'Select a structure above') : 'PyMOL is not installed'}">Render</button>
+      ${cap.pymol ? '' : '<div class="hint">PyMOL not installed.</div>'}
       <div id="renderout"></div>`;
 
     const on = (sel, fn) => { const e = p.querySelector(sel); if (e) e.onclick = ev => { ev.preventDefault(); fn(ev); }; };
-    on('[data-a=open3d]', () => GF.setMainTab('structure'));
     on('[data-a=af3]', () => af3Dialog());
     on('[data-a=addons]', () => addonsDialog());
     on('[data-a=pymol]', () => renderStructure(p.querySelector('[name=style]').value));
-    const esm = p.querySelector('[data-a=esm]');
+    const esm = __pick(p, '[data-a=esm]');
     if (esm && !esm.disabled) esm.onclick = () => esmfoldRun();
 
     refreshStructures().then(() => {

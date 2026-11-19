@@ -12,6 +12,8 @@ const GF = {
     translations: [],
     mainTab: 'dna', structPath: null, style3d: 'cartoon', structures: [],
     charW: 7.7, lineH: 0, perLine: 60, metrics: null,
+    circRot: 0, circZoom: 1, circPanX: 0, circPanY: 0,  // circular: spin, zoom, pan
+    lineGap: 14, featLanes: null,     // sequence view: row spacing, ribbon lanes
   },
   ws: null,
 };
@@ -218,13 +220,9 @@ function renderMaps() {
     $('#map-circular').innerHTML = '';
     return;
   }
-  const opts = {
-    selection: GF.ui.selection, cuts: GF.ui.showCuts ? GF.ui.cuts : [], orfs: GF.ui.orfs,
-    showOrfs: GF.ui.showOrfs, activeFeature: GF.ui.activeFeature,
-    primers: GF.ui.showPrimers ? GF.ui.primerSites : [],
-    onFeature: f => selectFeature(f),
-    onRange: (a, b, done) => { if (a !== null) setSelection(a, b); if (done) renderPanel(); },
-  };
+  // One source of truth for map options, so the circular map always gets its
+  // spin and zoom handlers.
+  const opts = mapOpts();
   if (GF.ui.view !== 'circular') GFMaps.renderLinear($('#map-linear'), s, opts);
   if (GF.ui.view !== 'linear') GFMaps.renderCircular($('#map-circular'), s, opts);
 }
@@ -253,6 +251,27 @@ function measure() {
 
 /* Row order, top to bottom: primers, top strand, bottom strand, translations.
    Primer and ORF rows carry no text; the overlay draws their arrows. */
+/** Pack features into non-overlapping lanes so each gets its own ribbon row. */
+function featureLanes(s) {
+  const items = (s.features || []).map(f => {
+    const segs = f.segments || [[0, 0]];
+    return { id: f.id, a: segs[0][0], b: segs[segs.length - 1][1], f };
+  }).sort((x, y) => x.a - y.a || y.b - x.b);
+  const ends = [];
+  const lane = new Map();
+  const pad = Math.max(1, Math.round((GF.ui.metrics ? GF.ui.metrics.per : 60) / 12));
+  items.forEach(it => {
+    let i = 0;
+    while (ends[i] !== undefined && it.a < ends[i] + pad) i++;
+    ends[i] = it.b;
+    lane.set(it.id, i);
+  });
+  return { lane, count: Math.min(ends.length, RIBBON_MAX), items };
+}
+
+const RIBBON_MAX = 5;      // beyond this the map is the better place to look
+const RIBBON_H = 15;
+
 function trackPlan() {
   const rows = [];
   if (GF.ui.showPrimers && GF.ui.primerSites.length) rows.push({ k: 'primer', cls: 't-primer' });
@@ -288,13 +307,23 @@ function layout() {
   const avail = $('#seqscroll').clientWidth - gutter - rightPad;
   const per = Math.max(20, Math.floor(avail / GF.ui.charW / 10) * 10);
   const rows = trackPlan();
-  const rowH = 16, blockPad = 12;
-  const lineH = rows.length * rowH + blockPad;
-  return { gutter, per, rows, rowH, lineH, nLines: Math.ceil(s.seq.length / per) || 1 };
+  const rowH = 16;
+  const lanes = GF.ui.featLanes || { lane: new Map(), count: 0 };
+  // Cut labels get a row of their own above everything, so red text never
+  // lands on top of the bases.
+  const cutH = (GF.ui.showCuts && GF.ui.cuts.length) ? 15 : 0;
+  const ribbonH = lanes.count * RIBBON_H;
+  const top = cutH + ribbonH;                     // where the base rows begin
+  const lineH = top + rows.length * rowH + GF.ui.lineGap;
+  return {
+    gutter, per, rows, rowH, lineH, top, cutH, ribbonTop: cutH, lanes,
+    nLines: Math.ceil(s.seq.length / per) || 1,
+  };
 }
 
 function renderSeqView() {
   const s = active();
+  if (s) GF.ui.featLanes = featureLanes(s);
   const inner = $('#seqinner');
   if (!s) { inner.innerHTML = ''; inner.style.height = '0px'; return; }
   const lay = layout(); GF.ui.metrics = lay;
@@ -320,7 +349,8 @@ function drawLines() {
     line.style.height = lay.lineH + 'px';
 
     const num = document.createElement('div');
-    num.className = 'ln-num'; num.style.top = '0px';
+    // Level with the forward strand, not with the ribbon band above it.
+    num.className = 'ln-num'; num.style.top = lay.top + 'px';
     num.textContent = (from + 1).toLocaleString();
     line.appendChild(num);
 
@@ -328,7 +358,7 @@ function drawLines() {
     lay.rows.forEach((r, ri) => {
       const d = document.createElement('div');
       d.className = 'ln-track ' + r.cls;
-      d.style.top = (ri * lay.rowH) + 'px';
+      d.style.top = (lay.top + ri * lay.rowH) + 'px';
       if (r.k === 'fwd') d.textContent = fwd;
       else if (r.k === 'rev') d.textContent = comp(fwd);
       else if (r.k === 'tr') d.textContent = regionAaRow(s.seq, from, to, r.tr, L);
@@ -350,12 +380,12 @@ function paintOverlay(ov, from, to, lay) {
   const s = active();
   const x = p => (p - from) * GF.ui.charW;
   const rowIndex = k => lay.rows.findIndex(r => r.k === k);
-  const fwdTop = Math.max(0, rowIndex('fwd')) * lay.rowH, fwdH = lay.rowH;
+  const fwdTop = lay.top + Math.max(0, rowIndex('fwd')) * lay.rowH, fwdH = lay.rowH;
 
   /* primers, drawn as a third strand above the duplex with a 3' arrow head */
   const primerRow = rowIndex('primer');
   if (primerRow >= 0) {
-    const pTop = primerRow * lay.rowH;
+    const pTop = lay.top + primerRow * lay.rowH;
     GF.ui.primerSites.forEach(p => {
       if (p.end <= from || p.start >= to) return;
       const a2 = Math.max(p.start, from), b2 = Math.min(p.end, to);
@@ -385,6 +415,34 @@ function paintOverlay(ov, from, to, lay) {
     });
   }
 
+  /* feature ribbons: a named bar above the bases, one lane per feature */
+  const lanes = lay.lanes;
+  if (lanes && lanes.count) {
+    (s.features || []).forEach(f => {
+      const ln = lanes.lane.get(f.id);
+      if (ln === undefined || ln >= RIBBON_MAX) return;
+      (f.segments || []).forEach(([a, b]) => {
+        if (b <= from || a >= to) return;
+        const a2 = Math.max(a, from), b2 = Math.min(b, to);
+        const w = Math.max(3, (b2 - a2) * GF.ui.charW);
+        const label = f.label || f.type;
+        const r = document.createElement('div');
+        r.className = 'ov-ribbon' + (GF.ui.activeFeature === f.id ? ' on' : '');
+        r.style.cssText = `left:${x(a2)}px;width:${w}px;top:${lay.ribbonTop + ln * RIBBON_H}px;` +
+          `background:${f.color};color:${GFMaps.contrast(f.color)}`;
+        if (w > 18 && f.strand) {
+          r.style.clipPath = f.strand === -1
+            ? 'polygon(7px 0,100% 0,100% 100%,7px 100%,0 50%)'
+            : 'polygon(0 0,calc(100% - 7px) 0,100% 50%,calc(100% - 7px) 100%,0 100%)';
+        }
+        if (w > label.length * 5.4 + 16) r.textContent = label;
+        r.title = `${label}  ${f.type}\n${a + 1}\u2013${b} (${b - a} bp)`;
+        r.onclick = ev => { ev.stopPropagation(); selectFeature(f); };
+        ov.appendChild(r);
+      });
+    });
+  }
+
   /* features: tint behind the bases plus a solid underline */
   (s.features || []).forEach(f => {
     (f.segments || []).forEach(([a, b]) => {
@@ -407,7 +465,7 @@ function paintOverlay(ov, from, to, lay) {
       if (o.end <= from || o.start >= to) return;
       const a2 = Math.max(o.start, from), b2 = Math.min(o.end, to);
       const col = o.strand === 1 ? '#2f855a' : '#9c4221';
-      const top = lay.rows.length * lay.rowH + 1;
+      const top = lay.top + lay.rows.length * lay.rowH + 1;
       const d = document.createElement('div');
       d.className = 'ov-orf';
       d.style.cssText = `left:${x(a2)}px;width:${(b2 - a2) * GF.ui.charW}px;top:${top}px;background:${col}`;
@@ -432,11 +490,11 @@ function paintOverlay(ov, from, to, lay) {
     if (c.pos < from || c.pos >= to) return;
     const d = document.createElement('div');
     d.className = 'ov-cut';
-    d.style.cssText = `left:${x(c.pos)}px;top:0;height:${lay.rows.length * lay.rowH}px`;
+    d.style.cssText = `left:${x(c.pos)}px;top:${lay.top}px;height:${lay.rows.length * lay.rowH}px`;
     ov.appendChild(d);
     const t = document.createElement('div');
     t.className = 'ov-cutlabel';
-    t.style.cssText = `left:${x(c.pos) + 2}px;top:${-1}px`;
+    t.style.cssText = `left:${x(c.pos) + 2}px;top:0px`;
     t.textContent = c.label;
     ov.appendChild(t);
   });
@@ -447,7 +505,8 @@ function paintOverlay(ov, from, to, lay) {
     const a2 = Math.max(sel[0], from), b2 = Math.min(sel[1], to);
     const d = document.createElement('div');
     d.className = 'ov-sel';
-    d.style.cssText = `left:${x(a2)}px;width:${Math.max(1, (b2 - a2) * GF.ui.charW)}px;top:0;height:${lay.rows.length * lay.rowH}px`;
+    d.style.cssText = `left:${x(a2)}px;width:${Math.max(1, (b2 - a2) * GF.ui.charW)}px;` +
+      `top:${lay.top}px;height:${lay.rows.length * lay.rowH}px`;
     ov.appendChild(d);
   }
 }
@@ -458,6 +517,7 @@ function baseAt(ev) {
   const r = $('#seqinner').getBoundingClientRect();
   const y = ev.clientY - r.top, x = ev.clientX - r.left - lay.gutter;
   const line = Math.floor(y / lay.lineH);
+  // y within the line is measured from the base rows, below the ribbon band
   if (line < 0) return 0;
   const col = Math.max(0, Math.min(lay.per, Math.round(x / GF.ui.charW)));
   return Math.max(0, Math.min(s.seq.length, line * lay.per + col));
@@ -476,9 +536,29 @@ function mapOpts() {
     selection: GF.ui.selection, cuts: GF.ui.showCuts ? GF.ui.cuts : [], orfs: GF.ui.orfs,
     showOrfs: GF.ui.showOrfs, activeFeature: GF.ui.activeFeature,
     primers: GF.ui.showPrimers ? GF.ui.primerSites : [],
+    rotation: GF.ui.circRot, zoom: GF.ui.circZoom,
+    panX: GF.ui.circPanX, panY: GF.ui.circPanY,
     onFeature: f => selectFeature(f),
     onRange: (a, b, done) => { if (a !== null) setSelection(a, b); if (done) renderPanel(); },
+    onRotate: r => { GF.ui.circRot = r; drawCircular(); },
+    onView: (z, x, y) => {
+      GF.ui.circZoom = Math.max(0.4, Math.min(6, z));
+      GF.ui.circPanX = x; GF.ui.circPanY = y;
+      drawCircular();
+    },
+    onPan: (x, y) => { GF.ui.circPanX = x; GF.ui.circPanY = y; drawCircular(); },
+    onResetView: () => {
+      GF.ui.circRot = 0; GF.ui.circZoom = 1; GF.ui.circPanX = 0; GF.ui.circPanY = 0;
+      drawCircular();
+    },
   };
+}
+
+/** Repaint only the circular map; spinning must not redraw the whole app. */
+function drawCircular() {
+  const s = active();
+  if (!s || GF.ui.view === 'linear') return;
+  GFMaps.renderCircular($('#map-circular'), s, mapOpts());
 }
 
 function selectFeature(f) {
@@ -769,6 +849,10 @@ function wire() {
     else { renderSeqView(); renderMaps(); }
   };
   $('#show-cuts').onchange = e => { GF.ui.showCuts = e.target.checked; renderMaps(); drawLines(); };
+  $$('#spacing button').forEach(b => b.onclick = () => {
+    GF.ui.lineGap = Math.max(2, Math.min(64, GF.ui.lineGap + (+b.dataset.gap) * 4));
+    renderSeqView();
+  });
   $('#file-filter').oninput = e => { GF.ui.fileFilter = e.target.value; renderFileList(); };
   $('#btn-save').onclick = saveActive;
   $('#btn-new').onclick = () => GFPanels.newSequenceDialog();
